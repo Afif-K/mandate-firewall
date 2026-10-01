@@ -1,0 +1,97 @@
+# Mandate Firewall (working name)
+
+Open-source, wallet-agnostic firewall for AI agents that transact onchain.
+
+## What this project does
+Before an AI agent's transaction reaches the blockchain, the firewall:
+1. Captures the user's original instruction as a locked, structured **mandate**
+   (action, assets, amount bounds, counterparties/venues, expiry) BEFORE the
+   agent reads any untrusted content.
+2. Simulates each proposed transaction on a forked chain (Anvil) to get its
+   real effects: balance deltas, approvals, recipients, contracts touched.
+3. Verifies the effects against the mandate: deterministic matcher first,
+   an isolated LLM only for fuzzy cases.
+4. Returns allow / block / escalate, with a plain-English diff:
+   "You asked: X. This transaction does: Y."
+
+The goal: catch prompt-injected transactions that pass every spend limit and
+allowlist but are not what the user asked for. Existing wallet guardrails
+(Coinbase, Safe, Privy, etc.) are rule-based; we sit on top of them and add
+intent verification. Inspired by the trusted/untrusted separation in
+"Defeating prompt injections by design" (CaMeL).
+
+## Goals
+- A tool developers actually use: protect an agent in under 5 minutes.
+- A public benchmark comparing: no defense vs rule-based guardrails vs
+  mandate verification, including "within-policy, off-mandate" attacks.
+- Credibility in AI engineering and AI security.
+
+## Non-negotiable design principles
+- **Never touch private keys.** Inspect already-signed transactions
+  (`eth_sendRawTransaction`); refuse to forward blocked ones.
+- **The agent can never modify a mandate.** Mandates come only from the
+  user's trusted instruction and are confirmed by the user.
+- **The verifier LLM never sees untrusted content.** It receives only the
+  mandate and simulated effects. Replace attacker-controlled strings (e.g.
+  token names/symbols) with canonical values from a verified registry.
+- **The LLM can only make decisions stricter.** Deterministic checks are a
+  hard gate; the LLM may escalate or block, never override a block.
+- **Fail closed.** If decoding, simulation, or the LLM fails, block or
+  escalate. Never silently allow.
+- **Honest about limits.** Maintain a threat model; label releases beta.
+
+## Out of scope (do not build)
+Wallets, key management, a large policy engine. Keep a minimal rule layer
+and focus effort on mandate capture, verification, and evaluation.
+
+## Architecture
+```
+agent -> [RPC proxy] -> decode -> simulate (Anvil fork) -> effects
+                                                      |
+user instruction -> [mandate capture] -> locked mandate
+                                                      v
+                              verifier (matcher + isolated LLM)
+                                                      v
+                      allow (forward) / block / escalate (human)
+                                   + audit log
+```
+Entry points: RPC proxy first; later an MCP server and wallet pre-sign hooks.
+
+## Tech stack
+Python 3.11+, web3.py, FastAPI, Foundry/Anvil, Pydantic, SQLite, an LLM API,
+Slack/Telegram for escalation. Development on testnet (Base Sepolia).
+License: MIT or Apache 2.0. Packaging: pip-installable + Docker.
+
+## Conventions
+- Type hints everywhere; Pydantic models for all structured data
+  (transactions, effects, mandates, verdicts).
+- Tests with pytest; every verifier rule and attack scenario gets a test.
+- Lint/format with ruff.
+- Small, focused commits with clear messages.
+- Config and secrets via environment variables; `.env` is gitignored and
+  never committed. Provide `.env.example`.
+
+## Safety rules for development
+- Testnet and local Anvil forks only. Never use real funds or real private
+  keys. Generate throwaway test keys for local testing.
+- Never print or log private keys or API keys.
+
+## Roadmap
+- [ ] M1: RPC proxy that intercepts `eth_sendRawTransaction`, decodes, logs, forwards
+- [ ] M2: Anvil simulation producing structured effects
+- [ ] M3: Mandate capture: user instruction -> locked, structured mandate
+- [ ] M4: Verifier (deterministic matcher + isolated LLM), plain-English verdicts, human escalation
+- [ ] M5: Real agent integration; demo an injection that rule-based guardrails miss
+- [ ] v0.1 release: README, demo GIF, quickstart, threat model
+- [ ] M6: Benchmark (build on CrAIBench/AgentDojo scenarios), results, open dataset, writeup
+
+**Current milestone: M1**
+
+## How to work with me
+- I'm a CS/AI engineering student building this to learn deeply and to ship
+  something real. Explain your reasoning step by step, with examples.
+- Propose a plan before writing significant code; wait for my OK.
+- Explain *why* the code works, not just what it does, especially for
+  blockchain concepts (transactions, RLP, calldata, ABIs, forking).
+- Push back when a design choice is weak or insecure, and suggest better options.
+- Keep me focused on the current milestone.

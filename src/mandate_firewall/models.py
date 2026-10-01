@@ -1,6 +1,6 @@
 """Pydantic models for structured data passed between firewall components."""
 
-from enum import IntEnum
+from enum import IntEnum, StrEnum
 
 from pydantic import BaseModel, ConfigDict
 
@@ -44,3 +44,32 @@ class DecodedTransaction(BaseModel):
     max_priority_fee_per_gas: int | None = None  # type 2
     access_list: tuple[AccessListEntry, ...] = ()
     raw: str  # the exact bytes we decoded, 0x-prefixed hex
+
+
+class CallKind(StrEnum):
+    EMPTY = "empty"  # no calldata: a plain ETH transfer (or a call to receive/fallback)
+    KNOWN = "known"  # selector in our registry and arguments decoded
+    UNKNOWN_SELECTOR = "unknown_selector"  # we don't guess at selectors we don't know
+    MALFORMED = "malformed"  # known selector, or partial selector, with undecodable arguments
+
+
+class DecodedArg(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    abi_type: str
+    value: int | str  # uint256 -> int; address -> checksummed str
+
+
+class DecodedCall(BaseModel):
+    """What the calldata *claims* to call. Not what the call does: the target
+    contract decides that. Simulated effects (M2) are the ground truth."""
+
+    model_config = ConfigDict(frozen=True)
+
+    kind: CallKind
+    selector: str | None = None  # 0x-prefixed 4 bytes
+    signature: str | None = None  # e.g. "transfer(address,uint256)"
+    args: tuple[DecodedArg, ...] = ()
+    trailing_bytes: int = 0  # bytes after the expected arguments (ignored by Solidity)
+    error: str | None = None

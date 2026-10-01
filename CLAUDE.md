@@ -38,6 +38,10 @@ intent verification. Inspired by the trusted/untrusted separation in
   hard gate; the LLM may escalate or block, never override a block.
 - **Fail closed.** If decoding, simulation, or the LLM fails, block or
   escalate. Never silently allow.
+- **Default-deny RPC methods.** Intercept transaction-sending methods,
+  forward an explicit allowlist of read-only methods, reject everything else.
+- **No unverified startup.** If the upstream RPC is unreachable at startup
+  (so its chainId can't be fetched), refuse to start.
 - **Honest about limits.** Maintain a threat model; label releases beta.
 
 ## Out of scope (do not build)
@@ -58,9 +62,10 @@ user instruction -> [mandate capture] -> locked mandate
 Entry points: RPC proxy first; later an MCP server and wallet pre-sign hooks.
 
 ## Tech stack
-Python 3.11+, web3.py, FastAPI, Foundry/Anvil, Pydantic, SQLite, an LLM API,
+Python 3.12 (pinned via uv; package supports >=3.11), web3.py, FastAPI, Foundry/Anvil, Pydantic, SQLite, an LLM API,
 Slack/Telegram for escalation. Development on testnet (Base Sepolia).
-License: MIT or Apache 2.0. Packaging: pip-installable + Docker.
+License: Apache-2.0. Packaging: pip-installable + Docker.
+Env & deps: `uv sync`, then `uv run pytest`, `uv run ruff check .`.
 
 ## Conventions
 - Type hints everywhere; Pydantic models for all structured data

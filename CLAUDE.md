@@ -73,6 +73,7 @@ Env & deps: `uv sync`, then `uv run pytest`, `uv run ruff check .`.
 - Tests with pytest; every verifier rule and attack scenario gets a test.
 - Lint/format with ruff.
 - Small, focused commits with clear messages.
+- Do not add Co-Authored-By trailers to commit messages.
 - Config and secrets via environment variables; `.env` is gitignored and
   never committed. Provide `.env.example`.
 

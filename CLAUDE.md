@@ -82,7 +82,7 @@ Env & deps: `uv sync`, then `uv run pytest`, `uv run ruff check .`.
 - Never print or log private keys or API keys.
 
 ## Roadmap
-- [ ] M1: RPC proxy that intercepts `eth_sendRawTransaction`, decodes, logs, forwards
+- [x] M1: RPC proxy that intercepts `eth_sendRawTransaction`, decodes, logs, forwards
 - [ ] M2: Anvil simulation producing structured effects
 - [ ] M3: Mandate capture: user instruction -> locked, structured mandate
 - [ ] M4: Verifier (deterministic matcher + isolated LLM), plain-English verdicts, human escalation
@@ -90,7 +90,7 @@ Env & deps: `uv sync`, then `uv run pytest`, `uv run ruff check .`.
 - [ ] v0.1 release: README, demo GIF, quickstart, threat model
 - [ ] M6: Benchmark (build on CrAIBench/AgentDojo scenarios), results, open dataset, writeup
 
-**Current milestone: M1**
+**Current milestone: M2**
 
 ## How to work with me
 - I'm a CS/AI engineering student building this to learn deeply and to ship

@@ -4,8 +4,7 @@ Request flow:
     HTTP body -> size/content-type checks -> JSON parse -> single or batch
     -> per request: validate -> classify method -> deny | forward | intercept
 
-Run it (commit 5 adds a `serve` command):
-    uv run uvicorn mandate_firewall.proxy.app:create_app --factory --port 8546
+Run it with `mandate-firewall serve` (see cli.py), which also sets up logging.
 """
 
 import json
@@ -17,9 +16,11 @@ from typing import Any
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
+from mandate_firewall.audit import AuditLog, AuditLogError, AuditRecord
 from mandate_firewall.config import Settings, redact_url
 from mandate_firewall.decode.calldata import decode_calldata
 from mandate_firewall.decode.transaction import TransactionDecodeError, decode_raw_transaction
+from mandate_firewall.models import Decision, DecodedTransaction
 from mandate_firewall.proxy.jsonrpc import (
     INVALID_PARAMS,
     INVALID_REQUEST,
@@ -48,13 +49,16 @@ class UpstreamUnavailableError(RuntimeError):
 
 
 class Proxy:
-    """Per-request JSON-RPC handling. Holds the upstream client and the chain id
-    that was verified at startup."""
+    """Per-request JSON-RPC handling. Holds the upstream client, the chain id
+    that was verified at startup, and the audit log."""
 
-    def __init__(self, upstream: UpstreamClient, chain_id: int, settings: Settings) -> None:
+    def __init__(
+        self, upstream: UpstreamClient, chain_id: int, settings: Settings, audit: AuditLog
+    ) -> None:
         self.upstream = upstream
         self.chain_id = chain_id
         self.settings = settings
+        self.audit = audit
 
     async def handle(self, obj: Any) -> dict[str, Any]:
         """Handle one request object. Always returns a response; never raises."""
@@ -65,6 +69,7 @@ class Proxy:
 
         method_class = classify(request.method)
         if method_class is MethodClass.FORWARD:
+            logger.debug("forwarding %s", request.method)
             return await self._forward(request.id, request.method, request.params)
         if method_class is MethodClass.INTERCEPT:
             return await self._send_raw_transaction(request)
@@ -99,22 +104,15 @@ class Proxy:
         try:
             tx = decode_raw_transaction(params[0])
         except TransactionDecodeError as exc:
-            logger.warning("blocked undecodable transaction: %s", exc)
-            return error_response(request.id, TRANSACTION_REJECTED, f"transaction rejected: {exc}")
-
-        if tx.chain_id is None and not self.settings.allow_legacy_unprotected:
-            reason = "legacy transaction without EIP-155 chain id (replayable on any chain)"
-        elif tx.chain_id is not None and tx.chain_id != self.chain_id:
-            reason = f"chain id {tx.chain_id} does not match upstream chain id {self.chain_id}"
-        else:
-            reason = None
-        if reason is not None:
-            logger.warning("blocked transaction %s: %s", tx.hash, reason)
-            return error_response(
-                request.id, TRANSACTION_REJECTED, f"transaction rejected: {reason}"
-            )
+            return self._block(request.id, AuditRecord.undecodable(params[0], str(exc)))
 
         call = decode_calldata(bytes.fromhex(tx.data[2:]))
+        reason = self._check(tx)
+        if reason is not None:
+            return self._block(
+                request.id, AuditRecord.for_transaction(tx, call, Decision.BLOCK, reason)
+            )
+
         logger.info(
             "intercepted tx %s type=%d chain=%s from=%s to=%s value=%d nonce=%d call=%s%s",
             tx.hash,
@@ -127,23 +125,53 @@ class Proxy:
             call.kind,
             f" {call.signature}" if call.signature else "",
         )
+        try:
+            self.audit.write(AuditRecord.for_transaction(tx, call, Decision.ALLOW))
+        except AuditLogError as exc:
+            # Fail closed: nothing reaches the chain without an audit record.
+            logger.error("blocked transaction %s: %s", tx.hash, exc)
+            return error_response(
+                request.id, TRANSACTION_REJECTED, "transaction rejected: audit log unavailable"
+            )
 
         # Forward the exact bytes we decoded, never a re-encoding: what we
         # checked must be byte-for-byte what the node receives.
         response = await self._forward(request.id, "eth_sendRawTransaction", [tx.raw])
-        returned_hash = response.get("result")
-        if returned_hash is not None and returned_hash != tx.hash:
-            logger.error("upstream returned hash %s, expected %s", returned_hash, tx.hash)
+        if "error" in response:
+            logger.warning("upstream rejected tx %s: %s", tx.hash, response["error"]["message"])
+        elif response.get("result") != tx.hash:
+            logger.error("upstream returned hash %s, expected %s", response.get("result"), tx.hash)
         return response
+
+    def _check(self, tx: DecodedTransaction) -> str | None:
+        """The reason to block this transaction, or None to allow it."""
+        if tx.chain_id is None and not self.settings.allow_legacy_unprotected:
+            return "legacy transaction without EIP-155 chain id (replayable on any chain)"
+        if tx.chain_id is not None and tx.chain_id != self.chain_id:
+            return f"chain id {tx.chain_id} does not match upstream chain id {self.chain_id}"
+        return None
+
+    def _block(self, request_id: Any, record: AuditRecord) -> dict[str, Any]:
+        logger.warning("blocked transaction %s: %s", record.hash or "<undecodable>", record.reason)
+        try:
+            self.audit.write(record)
+        except AuditLogError as exc:
+            # Already blocked, so nothing to fail closed on; make sure it's seen.
+            logger.error("audit record lost for blocked transaction: %s", exc)
+        return error_response(
+            request_id, TRANSACTION_REJECTED, f"transaction rejected: {record.reason}"
+        )
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
-    _configure_logging(settings.log_level)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         upstream_name = redact_url(settings.upstream_rpc_url)
+        # Opened first, so an unwritable audit log stops startup like an
+        # unreachable upstream does: we never run without either.
+        audit = AuditLog(settings.audit_log_path)
         upstream = UpstreamClient(str(settings.upstream_rpc_url))
         try:
             # Fail closed: without the upstream's chain id we can't check that
@@ -151,15 +179,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             chain_id = await upstream.fetch_chain_id()
         except UpstreamError as exc:
             await upstream.aclose()
+            audit.close()
+            # "from None": the server prints the whole exception chain, and the
+            # underlying httpx error text can contain the URL and its API key.
             raise UpstreamUnavailableError(
                 f"cannot fetch chain id from upstream {upstream_name}: {exc}"
-            ) from exc
+            ) from None
         logger.info("upstream %s, chain id %d", upstream_name, chain_id)
-        app.state.proxy = Proxy(upstream, chain_id, settings)
+        logger.info("audit log %s", settings.audit_log_path)
+        app.state.proxy = Proxy(upstream, chain_id, settings, audit)
         try:
             yield
         finally:
             await upstream.aclose()
+            audit.close()
 
     # No /docs or /openapi.json: the only endpoint is POST /.
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
@@ -222,12 +255,3 @@ async def _read_body(request: Request) -> bytes | None:
 def _reject_constant(name: str) -> Any:
     # Python's json accepts NaN/Infinity, which aren't JSON.
     raise ValueError(f"invalid JSON constant {name}")
-
-
-def _configure_logging(level: str) -> None:
-    package_logger = logging.getLogger("mandate_firewall")
-    package_logger.setLevel(level)
-    if not package_logger.handlers:
-        handler = logging.StreamHandler()
-        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
-        package_logger.addHandler(handler)

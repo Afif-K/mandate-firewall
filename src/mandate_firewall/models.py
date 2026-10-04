@@ -1,8 +1,14 @@
 """Pydantic models for structured data passed between firewall components."""
 
 from enum import IntEnum, StrEnum
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, PlainSerializer
+
+# An integer that serializes to JSON as a decimal string. Onchain integers go up
+# to 2**256, and many JSON consumers (JavaScript, some jq builds) parse numbers
+# as 64-bit floats, silently rounding anything above 2**53.
+BigInt = Annotated[int, PlainSerializer(str, return_type=str, when_used="json")]
 
 
 class TxType(IntEnum):
@@ -58,7 +64,7 @@ class DecodedArg(BaseModel):
 
     name: str
     abi_type: str
-    value: int | str  # uint256 -> int; address -> checksummed str
+    value: BigInt | str  # uint256 -> int; address -> checksummed str
 
 
 class DecodedCall(BaseModel):
@@ -73,3 +79,10 @@ class DecodedCall(BaseModel):
     args: tuple[DecodedArg, ...] = ()
     trailing_bytes: int = 0  # bytes after the expected arguments (ignored by Solidity)
     error: str | None = None
+
+
+class Decision(StrEnum):
+    """What the firewall does with a transaction. M4 adds "escalate"."""
+
+    ALLOW = "allow"  # forward to the upstream node
+    BLOCK = "block"  # refuse; the node never sees it

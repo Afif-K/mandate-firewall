@@ -6,6 +6,7 @@ just what the agent got back but what did (or did not) reach the node.
 
 import json
 import logging
+import traceback
 from collections.abc import Callable, Iterator
 from typing import Any
 
@@ -16,6 +17,7 @@ from eth_account import Account
 from eth_utils import keccak
 from fastapi.testclient import TestClient
 
+from mandate_firewall.audit import AuditLog, AuditLogError
 from mandate_firewall.config import Settings
 from mandate_firewall.proxy import app as app_module
 from mandate_firewall.proxy.app import UpstreamUnavailableError, create_app
@@ -34,6 +36,24 @@ CHAIN_ID = 84532  # Base Sepolia
 TEST_KEY = "0x" + "11" * 32
 SENDER = Account.from_key(TEST_KEY).address
 RECIPIENT = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+
+
+AUDIT_PATH = "logs/audit.jsonl"  # the default, relative to the working directory
+
+
+@pytest.fixture(autouse=True)
+def _in_tmp_dir(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The proxy writes its audit log relative to the working directory; keep
+    # it out of the repo.
+    monkeypatch.chdir(tmp_path)
+
+
+def audit_records() -> list[dict[str, Any]]:
+    try:
+        with open(AUDIT_PATH) as f:
+            return [json.loads(line) for line in f]
+    except FileNotFoundError:
+        return []
 
 
 class FakeNode:
@@ -149,6 +169,16 @@ def test_refuses_to_start_when_chain_id_call_fails(node: FakeNode) -> None:
                 pass
 
 
+def test_refuses_to_start_when_audit_log_unwritable(
+    node: FakeNode, mock_upstream: respx.MockRouter, tmp_path: Any
+) -> None:
+    (tmp_path / "not-a-dir").write_text("")
+    with pytest.raises(AuditLogError, match="cannot open audit log"):
+        with make_client(node, audit_log_path=tmp_path / "not-a-dir" / "audit.jsonl"):
+            pass
+    assert node.calls == []
+
+
 def test_startup_error_does_not_leak_url_path() -> None:
     url = "http://upstream.test:8545/v2/SECRET-API-KEY"
     with respx.mock() as router:
@@ -157,7 +187,9 @@ def test_startup_error_does_not_leak_url_path() -> None:
         with pytest.raises(UpstreamUnavailableError) as excinfo:
             with TestClient(create_app(cfg)):
                 pass
-    assert "SECRET-API-KEY" not in str(excinfo.value)
+    # The server logs the whole traceback, chained causes included.
+    full_traceback = "".join(traceback.format_exception(excinfo.value))
+    assert "SECRET-API-KEY" not in full_traceback
     assert "upstream.test:8545" in str(excinfo.value)
 
 
@@ -210,6 +242,7 @@ def test_denied_methods_never_reach_upstream(
     assert error_code(body) == METHOD_NOT_FOUND
     assert body["id"] == 1
     assert node.calls == []
+    assert audit_records() == []
 
 
 # --- malformed requests -----------------------------------------------------------
@@ -273,6 +306,21 @@ def test_accepts_json_content_type_with_charset(client: TestClient) -> None:
     assert "result" in response.json()
 
 
+def test_no_cors_preflight(client: TestClient) -> None:
+    # A browser sends this before a cross-origin JSON POST. Without an
+    # Access-Control-Allow-Origin reply, it never sends the POST.
+    response = client.options(
+        "/",
+        headers={
+            "origin": "https://evil.example",
+            "access-control-request-method": "POST",
+            "access-control-request-headers": "content-type",
+        },
+    )
+    assert response.status_code == 405
+    assert "access-control-allow-origin" not in response.headers
+
+
 def test_rejects_oversized_body(
     client: TestClient, node: FakeNode, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -315,6 +363,7 @@ def test_batch_forwards_transactions_in_order(client: TestClient, node: FakeNode
     body = client.post("/", json=batch).json()
     assert all("result" in r for r in body)
     assert [c["params"][0] for c in node.calls] == txs
+    assert [r["raw"] for r in audit_records()] == txs
 
 
 def test_empty_batch(client: TestClient, node: FakeNode) -> None:
@@ -345,6 +394,60 @@ def test_valid_transaction_is_decoded_logged_and_forwarded(
     assert f"from={SENDER}" in caplog.text
 
 
+def test_allowed_transaction_is_audited_once(client: TestClient) -> None:
+    transfer = "0xa9059cbb" + "00" * 12 + RECIPIENT[2:].lower() + f"{10**30:064x}"
+    raw = sign(to=RECIPIENT, value=0, gas=60_000, data=transfer)
+    client.post("/", json=rpc("eth_sendRawTransaction", [raw]))
+    (record,) = audit_records()
+    assert record["decision"] == "allow"
+    assert record["reason"] is None
+    assert record["hash"] == "0x" + keccak(hexstr=raw).hex()
+    assert record["tx_type"] == 2
+    assert record["chain_id"] == str(CHAIN_ID)
+    assert record["sender"] == SENDER
+    assert record["to"] == RECIPIENT
+    assert record["value"] == "0"
+    assert record["gas_limit"] == "60000"
+    assert record["max_fee_per_gas"] == "3000000000"
+    assert record["max_priority_fee_per_gas"] == "1000000000"
+    assert record["gas_price"] is None
+    assert record["selector"] == "0xa9059cbb"
+    assert record["call"]["signature"] == "transfer(address,uint256)"
+    # uint256 arguments are strings: 10**30 doesn't survive a float round-trip.
+    assert record["call"]["args"][1] == {
+        "name": "amount",
+        "abi_type": "uint256",
+        "value": str(10**30),
+    }
+    assert record["raw"] == raw
+
+
+def test_upstream_rejection_still_audited_as_allowed(client: TestClient, node: FakeNode) -> None:
+    # The audit line records the firewall's decision, written before forwarding.
+    node.errors["eth_sendRawTransaction"] = {"code": -32000, "message": "nonce too low"}
+    client.post("/", json=rpc("eth_sendRawTransaction", [sign()]))
+    assert [r["decision"] for r in audit_records()] == ["allow"]
+
+
+def test_audit_write_failure_blocks_transaction(
+    client: TestClient, node: FakeNode, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(self: AuditLog, record: Any) -> None:
+        raise AuditLogError("disk full")
+
+    monkeypatch.setattr(AuditLog, "write", fail)
+    body = client.post("/", json=rpc("eth_sendRawTransaction", [sign()])).json()
+    assert error_code(body) == TRANSACTION_REJECTED
+    assert "audit log unavailable" in body["error"]["message"]
+    assert node.calls == []
+
+
+def test_read_methods_are_not_audited(client: TestClient) -> None:
+    client.post("/", json=rpc("eth_getBalance", [SENDER, "latest"]))
+    client.post("/", json=rpc("eth_sendRawTransaction", [123]))  # invalid params: not a tx
+    assert audit_records() == []
+
+
 def test_forwards_the_exact_decoded_bytes(client: TestClient, node: FakeNode) -> None:
     raw = sign()
     client.post("/", json=rpc("eth_sendRawTransaction", ["0x" + raw[2:].upper()]))
@@ -363,6 +466,10 @@ def test_wrong_chain_id_is_rejected(client: TestClient, node: FakeNode) -> None:
     assert error_code(body) == TRANSACTION_REJECTED
     assert "chain id 1 does not match upstream chain id 84532" in body["error"]["message"]
     assert node.calls == []
+    (record,) = audit_records()
+    assert record["decision"] == "block"
+    assert record["chain_id"] == "1"
+    assert record["reason"] == "chain id 1 does not match upstream chain id 84532"
 
 
 def unprotected_legacy() -> str:
@@ -410,6 +517,10 @@ def test_undecodable_transactions_are_rejected(
     body = client.post("/", json=rpc("eth_sendRawTransaction", [raw])).json()
     assert error_code(body) == TRANSACTION_REJECTED
     assert node.calls == []
+    (record,) = audit_records()
+    assert record["decision"] == "block"
+    assert record["hash"] is None and record["call"] is None
+    assert record["raw"] == raw
 
 
 @pytest.mark.parametrize("params", [None, [], ["0x00", "0x00"], [123], {"tx": "0x00"}, [["0x00"]]])

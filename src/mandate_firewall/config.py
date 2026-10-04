@@ -1,5 +1,6 @@
 """Runtime configuration, read from environment variables (and .env if present)."""
 
+from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
 
@@ -14,6 +15,8 @@ class Settings(BaseSettings):
     proxy_host: str = "127.0.0.1"
     proxy_port: int = Field(default=8546, ge=1, le=65535)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+    # One JSON line per intercepted transaction. Relative to the working directory.
+    audit_log_path: Path = Path("logs/audit.jsonl")
     # Pre-EIP-155 legacy transactions carry no chain id, so a signature is valid
     # on every chain and anyone can replay it elsewhere. Off unless opted in.
     allow_legacy_unprotected: bool = False

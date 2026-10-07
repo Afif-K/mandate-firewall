@@ -56,6 +56,7 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
     "anvil: integration test that needs a local anvil binary (skipped if missing)",
+    "forge: test that runs Foundry's forge (skipped if missing)",
 ]
 # Starlette's TestClient prefers httpx2 and warns when falling back to httpx. We use
 # httpx on purpose (see docs/m2-plan.md, decision 4); silence only that one message.

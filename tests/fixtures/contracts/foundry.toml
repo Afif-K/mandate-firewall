@@ -1,0 +1,18 @@
+# Test contracts for simulation tests. Not deployed anywhere real.
+# Build with: uv run python tests/fixtures/contracts/build.py
+# Pinned so the committed bytecode is reproducible byte for byte.
+[profile.default]
+src = "src"
+solc_version = "0.8.37"
+evm_version = "cancun"
+optimizer = true
+optimizer_runs = 200
+# No metadata hash appended to the bytecode: it depends on file paths and
+# settings, not just the code, and would make rebuilds differ.
+bytecode_hash = "none"
+cbor_metadata = false
+
+[lint]
+# Forge lints after every build by default. These are deliberately tiny test
+# contracts (no zero-address checks, etc.), so the warnings are noise here.
+lint_on_build = false

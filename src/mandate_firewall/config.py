@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     # Upper bound on simulating one transaction, including waiting for the
     # simulator. A transaction that runs out of time is blocked.
     simulation_timeout_seconds: float = Field(default=10.0, gt=0)
+    # Token balance/allowance checks per transaction (two reads each). A
+    # transaction that needs more is blocked rather than left to time out.
+    max_token_state_checks: int = Field(default=50, ge=1)
 
 
 def redact_url(url: AnyHttpUrl | str) -> str:

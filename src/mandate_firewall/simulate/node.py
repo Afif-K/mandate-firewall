@@ -40,7 +40,7 @@ from typing import Any
 from eth_account import Account
 from pydantic import BaseModel, ConfigDict, Field
 
-from mandate_firewall.proxy.upstream import UpstreamClient, UpstreamError
+from mandate_firewall.proxy.upstream import UpstreamClient, UpstreamError, UpstreamResult
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +104,11 @@ class SimulatorNode:
         self._url: str | None = None
 
     @property
+    def chain_id(self) -> int:
+        """The upstream chain id, which every fork is verified to have."""
+        return self._chain_id
+
+    @property
     def pid(self) -> int | None:
         return self._process.pid if self._process is not None else None
 
@@ -138,20 +143,31 @@ class SimulatorNode:
         later fork() succeeds."""
         reset = {"forking": {"jsonRpcUrl": self._upstream_url, "blockNumber": point.number}}
         await self.call("anvil_reset", [reset])
-        await self._verify(point)
+        await self.verify(point)
+
+    async def restart(self, upstream: UpstreamClient) -> None:
+        """Stop and start again, forked at the upstream's current head."""
+        await self.stop()
+        await self.start(upstream)
 
     async def call(self, method: str, params: list[Any]) -> Any:
         """Call the node and return the result. Errors carry only the method
         and error code (see SimulatorError)."""
-        if self._client is None or not self.is_running():
-            raise SimulatorError("simulation node is not running")
-        try:
-            reply = await self._client.call(method, params)
-        except UpstreamError as exc:
-            raise SimulatorError(f"simulation node request {method} failed") from exc
+        reply = await self.try_call(method, params)
         if reply.error is not None:
             raise SimulatorError(f"simulation node returned error {reply.error.code} on {method}")
         return reply.result
+
+    async def try_call(self, method: str, params: list[Any]) -> UpstreamResult:
+        """Like call(), but a JSON-RPC error is returned, not raised. The
+        error's message is anvil's own text, which can quote the upstream
+        URL: never pass it on unfiltered."""
+        if self._client is None or not self.is_running():
+            raise SimulatorError("simulation node is not running")
+        try:
+            return await self._client.call(method, params)
+        except UpstreamError as exc:
+            raise SimulatorError(f"simulation node request {method} failed") from exc
 
     async def stop(self) -> None:
         """Stop the process and delete its private home. Safe to call twice."""
@@ -213,7 +229,7 @@ class SimulatorNode:
                 await asyncio.sleep(0.1)
         raise SimulatorError(f"anvil not ready after {STARTUP_TIMEOUT_SECONDS}s")
 
-    async def _verify(self, point: ForkPoint) -> None:
+    async def verify(self, point: ForkPoint) -> None:
         """Check the node is a clean fork of the upstream at `point`."""
         chain_id = _quantity(await self.call("eth_chainId", []))
         if chain_id != self._chain_id:
@@ -287,7 +303,7 @@ class SimulatorNode:
             # Anvil returns false, not an error, for an unknown snapshot id.
             if await self.call("evm_revert", [snapshot]) is not True:
                 raise SimulatorError("evm_revert failed after the probe")
-        await self._verify(point)
+        await self.verify(point)
 
 
 def _quantity(value: Any) -> int:

@@ -265,7 +265,11 @@ class RawLog(_Effect):
 class TokenStateCheck(_Effect):
     """balanceOf/allowance read before and after, compared with what the
     token's events claim. consistent=False means the events lied (or the
-    token did something events don't show)."""
+    token did something events don't show).
+
+    For a balance, `claimed` is the net change the Transfer events add up to
+    for `owner` (for ERC-721, one per token). For an allowance, it is the
+    value the last Approval event for (owner, spender) set."""
 
     token: Address
     kind: Literal["balance", "allowance"]
@@ -273,12 +277,16 @@ class TokenStateCheck(_Effect):
     spender: Address | None = None  # allowance checks only
     before: Uint256
     after: Uint256
+    claimed: Uint256Delta
     consistent: bool
 
     @model_validator(mode="after")
-    def _spender_matches_kind(self) -> Self:
+    def _consistent_with_numbers(self) -> Self:
         if (self.kind == "allowance") != (self.spender is not None):
             raise ValueError("spender is required for allowance checks and only for them")
+        measured = self.after if self.kind == "allowance" else self.after - self.before
+        if self.consistent != (measured == self.claimed):
+            raise ValueError("consistent must say whether the measured value matches the claim")
         return self
 
 

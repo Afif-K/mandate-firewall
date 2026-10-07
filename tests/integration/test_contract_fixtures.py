@@ -2,74 +2,17 @@
 what it exists to do. They also run real receipts and traces through the log
 decoder and trace parser."""
 
-import time
-from typing import Any
-
 import pytest
-from eth_account import Account
 from eth_utils import to_checksum_address
 
 from mandate_firewall.models import TokenStandard
 from mandate_firewall.simulate.logs import decode_logs
 from mandate_firewall.simulate.trace import parse_call_trace
-from tests.contracts import NAMES, Contract, load
+from tests.contracts import NAMES, load
+from tests.integration.chain import ALICE, BOB, THIEF, balance, call, deploy, transact
 from tests.integration.conftest import Service, rpc_result
 
 pytestmark = pytest.mark.anvil
-
-CHAIN_ID = 31337
-# anvil's public dev key 0. Local only.
-KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-ALICE = Account.from_key(KEY).address
-BOB = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
-THIEF = "0x000000000000000000000000000000000000dEaD"
-
-
-def send(url: str, to: str | None, data: str = "0x", value: int = 0) -> dict[str, Any]:
-    """Sign as ALICE, send, and wait for the receipt (anvil's automine returns
-    the hash before the block exists)."""
-    tx: dict[str, Any] = {
-        "type": 2,
-        "chainId": CHAIN_ID,
-        "nonce": int(rpc_result(url, "eth_getTransactionCount", [ALICE, "pending"]), 16),
-        "gas": 3_000_000,
-        "maxFeePerGas": 100 * 10**9,
-        "maxPriorityFeePerGas": 1,
-        "value": value,
-        "data": data,
-    }
-    if to is not None:
-        tx["to"] = to
-    raw = "0x" + bytes(Account.sign_transaction(tx, KEY).raw_transaction).hex()
-    tx_hash = rpc_result(url, "eth_sendRawTransaction", [raw])
-    for _ in range(100):
-        receipt = rpc_result(url, "eth_getTransactionReceipt", [tx_hash])
-        if receipt is not None:
-            return receipt
-        time.sleep(0.05)
-    pytest.fail(f"transaction {tx_hash} was not mined")
-
-
-def deploy(url: str, contract: Contract, *args: Any) -> str:
-    receipt = send(url, None, contract.deploy_data(*args))
-    assert receipt["status"] == "0x1", receipt
-    return to_checksum_address(receipt["contractAddress"])
-
-
-def call(url: str, contract: Contract, address: str, function: str, *args: Any) -> int:
-    data = contract.call_data(function, *args)
-    result = rpc_result(url, "eth_call", [{"to": address, "data": data}, "latest"])
-    return int(result, 16)
-
-
-def transact(url: str, contract: Contract, address: str, function: str, *args: Any, value: int = 0):
-    receipt = send(url, address, contract.call_data(function, *args), value)
-    assert receipt["status"] == "0x1", receipt
-    return receipt
-
-
-def balance(url: str, address: str) -> int:
-    return int(rpc_result(url, "eth_getBalance", [address, "latest"]), 16)
 
 
 @pytest.mark.parametrize("name", NAMES)

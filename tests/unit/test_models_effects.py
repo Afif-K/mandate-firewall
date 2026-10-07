@@ -73,6 +73,7 @@ def effects(**overrides: Any) -> Effects:
                 owner=SENDER,
                 before=100_000_000,
                 after=50_000_000,
+                claimed=-50_000_000,
                 consistent=True,
             ),
         ),
@@ -272,14 +273,35 @@ def test_erc20_has_amount_and_erc721_has_token_id(model: type[BaseModel]) -> Non
 
 
 def test_state_check_spender_only_for_allowances() -> None:
-    base = {"token": TOKEN, "owner": SENDER, "before": 0, "after": 5, "consistent": False}
-    TokenStateCheck(**base, kind="allowance", spender=BOB)
+    base = {"token": TOKEN, "owner": SENDER, "before": 0, "after": 5, "claimed": 5}
+    TokenStateCheck(**base, kind="allowance", spender=BOB, consistent=True)
     with pytest.raises(ValidationError):
-        TokenStateCheck(**base, kind="allowance")
+        TokenStateCheck(**base, kind="allowance", consistent=True)
     with pytest.raises(ValidationError):
-        TokenStateCheck(**base, kind="balance", spender=BOB)
+        TokenStateCheck(**base, kind="balance", spender=BOB, consistent=True)
     with pytest.raises(ValidationError):
-        TokenStateCheck(**base, kind="name", spender=None)  # type: ignore[arg-type]
+        TokenStateCheck(**base, kind="name", consistent=True)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("kind", "before", "after", "claimed", "consistent"),
+    [
+        ("balance", 100, 90, -10, True),  # lost 10, events say lost 10
+        ("balance", 100, 90, 0, False),  # lost 10, events say nothing moved
+        ("balance", 0, 0, 10, False),  # events say +10, nothing arrived
+        ("allowance", 7, 50, 50, True),  # allowance compares the final value
+        ("allowance", 7, 50, 43, False),
+    ],
+)
+def test_state_check_consistent_must_match_the_numbers(
+    kind: str, before: int, after: int, claimed: int, consistent: bool
+) -> None:
+    spender = BOB if kind == "allowance" else None
+    fields = {"token": TOKEN, "kind": kind, "owner": SENDER, "spender": spender,
+              "before": before, "after": after, "claimed": claimed}  # fmt: skip
+    assert TokenStateCheck(**fields, consistent=consistent).consistent is consistent
+    with pytest.raises(ValidationError, match="consistent must say"):
+        TokenStateCheck(**fields, consistent=not consistent)
 
 
 # --- Effects invariants ---------------------------------------------------------

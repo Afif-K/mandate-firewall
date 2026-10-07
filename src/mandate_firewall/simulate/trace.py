@@ -17,8 +17,8 @@ was checked against traces from anvil 1.8.3 in tests/fixtures/traces):
 - A CREATE whose init code fails has no `to`: target None, nothing created.
 - `revertReason` is the contract's own revert message, decoded to text by the
   node. It is attacker-chosen text, so it is never read. Neither are `error`,
-  `output` or the gas fields. Revert data, if needed, comes from the receipt
-  as hex.
+  `output` or the gas fields. (The simulator takes the top frame's `output`
+  as raw revert data, hex only: receipts don't carry it.)
 - The walk is iterative. The EVM allows call depth 1024, deeper than
   Python's default recursion limit.
 

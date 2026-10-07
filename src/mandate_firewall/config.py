@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     # Token balance/allowance checks per transaction (two reads each). A
     # transaction that needs more is blocked rather than left to time out.
     max_token_state_checks: int = Field(default=50, ge=1)
+    # anvil's chain mode for the simulation fork. "auto" picks "optimism" for
+    # known OP-stack chain ids (Base, OP Mainnet and their Sepolia testnets).
+    simulator_network: Literal["auto", "ethereum", "optimism"] = "auto"
 
 
 def redact_url(url: AnyHttpUrl | str) -> str:

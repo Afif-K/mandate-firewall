@@ -10,14 +10,16 @@ import pytest
 import rlp
 from eth_account import Account
 from eth_utils import keccak
+from pydantic import ValidationError
 
+from mandate_firewall.decode import transaction as transaction_module
 from mandate_firewall.decode.transaction import (
     SECP256K1_N,
     TransactionDecodeError,
     UnsupportedTransactionType,
     decode_raw_transaction,
 )
-from mandate_firewall.models import TxType
+from mandate_firewall.models import DecodedTransaction, TxType
 
 # Throwaway key used only in tests; never funded anywhere.
 TEST_KEY = "0x" + "11" * 32
@@ -260,3 +262,44 @@ def test_rejects_wrong_length_to_address() -> None:
     fields[5] = fields[5][:19]
     with pytest.raises(TransactionDecodeError, match="20 bytes"):
         decode_raw_transaction(b"\x02" + rlp.encode(fields))
+
+
+def test_decoded_transaction_uses_strict_types() -> None:
+    tx = decode_raw_transaction(_strict_types_raw())
+    # A JSON round trip gives back the same transaction, with integers as strings.
+    assert DecodedTransaction.model_validate_json(tx.model_dump_json()) == tx
+    assert tx.model_dump(mode="json")["value"] == str(tx.value)
+    data = tx.model_dump()
+    for field, bad in [
+        ("sender", tx.sender.replace("0x", "0x" + "f", 1)[:42] + "z"),
+        ("value", True),
+        ("value", 2**256),
+        ("nonce", -1),
+        ("hash", tx.hash[:-2]),
+        ("raw", tx.raw + "0"),
+    ]:
+        with pytest.raises(ValidationError):
+            DecodedTransaction(**(data | {field: bad}))
+
+
+def test_validation_errors_become_decode_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    # If the decoder ever produced a value the model rejects, callers that
+    # only catch TransactionDecodeError must still see one.
+    monkeypatch.setattr(transaction_module, "_recover_sender", lambda *args: "not an address")
+    with pytest.raises(TransactionDecodeError, match="fail validation"):
+        decode_raw_transaction(_strict_types_raw())
+
+
+def _strict_types_raw() -> str:
+    tx = {
+        "type": 2,
+        "chainId": 1,
+        "nonce": 3,
+        "gas": 21_000,
+        "to": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "value": 5,
+        "maxFeePerGas": 2,
+        "maxPriorityFeePerGas": 1,
+        "data": b"",
+    }
+    return "0x" + bytes(Account.sign_transaction(tx, "0x" + "22" * 32).raw_transaction).hex()

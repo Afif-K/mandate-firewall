@@ -1,6 +1,6 @@
 # M2 plan: simulation that produces structured effects
 
-Status: **approved 2026-10-06**. Commits 0–6 done. Next step: commit 7 (proxy wiring).
+Status: **approved 2026-10-06**. Commits 0–7 done. Next step: commit 8 (docs).
 
 ## Decisions (agreed 2026-10-06)
 
@@ -190,6 +190,11 @@ Rules: there's no "simulation disabled" switch. Any exception inside `simulate()
    - *Native balance reads are not capped* (only token checks are, as decided). A trace touching thousands of addresses still runs into the timeout and is blocked.
    *Verify:* integration tests per scenario: ETH send, ERC-20 transfer/approve, NFT `setApprovalForAll`, internal ETH via forwarder, LyingToken → `consistent=False`, revert → `REVERTED`, two sims back-to-back don't leak state, a killed Anvil → error and recovery, and a timeout via a slow fake. Prints p50 latency.
 7. **Proxy wiring.** Lifespan starts the simulator (fails closed at startup). `_send_raw_transaction` simulates before the audit write. Any simulation failure or revert → block `-32003`. `AuditRecord` gains `effects` and `simulation_error`. A test checks that agents still can't reach `anvil_*`, `evm_*` or `debug_*`.
+   **Done.** Also includes `SIMULATOR_NETWORK` (Decision 5) and the strict types on `DecodedTransaction` (agreed after commit 2). Notes:
+   - `create_app(settings, simulator_factory)`. Tests inject a fake simulator through the factory. There is no setting that turns simulation off.
+   - A simulator crash (a bug, not a `SimulationError`) also blocks, with "simulation failed: internal error". Its details go to the log only.
+   - *Sequential nonces, measured:* nonce n+1 simulated before n is mined upstream is blocked ("nonce may be too high"). Against a local anvil, the batch case goes either way, depending on whether anvil mined n within a few ms. The integration test accepts both outcomes and asserts the invariants: blocked txs never reach the node, and forwarded ones are a prefix. M4's pending state should make all of them pass.
+   - The simulation node is a child process of the proxy. A clean shutdown stops it. If the proxy is SIGKILLed, the anvil child is left running (orphaned) until killed by hand. That's acceptable for now; the Docker image (v0.1) should run both under one init.
    *Verify:* existing M1 tests still pass. New integration test: proxy → real tx is forwarded with effects in the audit line, a reverting tx is blocked and never mined upstream, and with the simulator killed, a tx is blocked.
 8. **Docs.** Rewrite THREAT_MODEL.md for M2 (all of §5, same-host tampering, off-chain signatures, multi-tx flows), README quickstart (Anvil now required). In CLAUDE.md, mark M2 done and add the pre-sign / typed-data inspection milestone (Permit2 and EIP-2612 at minimum) before v0.1.
    *Verify:* read-through. `uv run ruff check .` and the full `uv run pytest`.

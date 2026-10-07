@@ -26,7 +26,7 @@ from typing import TextIO
 from pydantic import BaseModel, ConfigDict, Field
 
 from mandate_firewall.decode.transaction import MAX_RAW_TX_BYTES
-from mandate_firewall.models import BigInt, Decision, DecodedCall, DecodedTransaction
+from mandate_firewall.models import BigInt, Decision, DecodedCall, DecodedTransaction, Effects
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +63,10 @@ class AuditRecord(BaseModel):
     max_priority_fee_per_gas: BigInt | None = None
     selector: str | None = None
     call: DecodedCall | None = None
+    # What the transaction did on the simulated fork. None if it was blocked
+    # before simulation, or if simulation failed (then see simulation_error).
+    effects: Effects | None = None
+    simulation_error: str | None = None
     raw: str
     raw_truncated: bool = False
 
@@ -73,10 +77,15 @@ class AuditRecord(BaseModel):
         call: DecodedCall,
         decision: Decision,
         reason: str | None = None,
+        *,
+        effects: Effects | None = None,
+        simulation_error: str | None = None,
     ) -> "AuditRecord":
         return cls(
             decision=decision,
             reason=reason,
+            effects=effects,
+            simulation_error=simulation_error,
             hash=tx.hash,
             tx_type=int(tx.tx_type),
             chain_id=tx.chain_id,

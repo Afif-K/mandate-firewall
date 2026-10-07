@@ -27,13 +27,13 @@ RECIPIENT = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"  # dev account 1
 ATTACKER = "0x000000000000000000000000000000000000dEaD"
 
 
-def sign(tx_type: int, nonce: int, chain_id: int = ANVIL_CHAIN_ID) -> str:
+def sign(tx_type: int, nonce: int, chain_id: int = ANVIL_CHAIN_ID, value: int = 10**15) -> str:
     tx: dict[str, Any] = {
         "chainId": chain_id,
         "nonce": nonce,
         "gas": 21_000,
         "to": RECIPIENT,
-        "value": 10**15,
+        "value": value,
         "data": b"",
     }
     if tx_type == 2:
@@ -87,7 +87,28 @@ def test_transaction_is_mined_and_audited_once(proxy: Proxy, tx_type: int) -> No
     assert record["raw"] == raw
 
 
-def test_batch_of_transactions_is_mined_in_order(proxy: Proxy) -> None:
+def test_transaction_with_a_nonce_gap_is_blocked(proxy: Proxy, anvil: Service) -> None:
+    """Simulated against the upstream head, nonce n+1 can't run before nonce
+    n is mined: the fork never mines it, so it's blocked (fail closed)."""
+    nonce = next_nonce(proxy.url)
+    # A value no other test uses, so this signed tx is unique to this test.
+    raw = sign(2, nonce + 1, value=7)
+
+    response = rpc_call(proxy.url, "eth_sendRawTransaction", [raw])
+
+    assert response["error"]["code"] == TRANSACTION_REJECTED
+    assert "nonce may be too high" in response["error"]["message"]
+    assert rpc_result(anvil.url, "eth_getTransactionByHash", [tx_hash(raw)]) is None
+    (record,) = records_for(proxy, tx_hash(raw))
+    assert record["decision"] == "block"
+
+
+def test_batch_of_dependent_transactions(proxy: Proxy, anvil: Service) -> None:
+    """Each transaction is simulated alone against the upstream head. Whether
+    nonce n+1 passes depends on whether anvil has mined nonce n by the time
+    it's simulated (a few milliseconds either way), so both outcomes are
+    allowed here. A known M2 limitation (docs/m2-plan.md, Roadmap pushback 2):
+    M4's pending state should make every one of them pass."""
     first = next_nonce(proxy.url)
     raws = [sign(2, first + i) for i in range(3)]
     batch = [
@@ -97,11 +118,21 @@ def test_batch_of_transactions_is_mined_in_order(proxy: Proxy) -> None:
 
     responses = _post(proxy.url, batch)
 
-    assert [r["result"] for r in responses] == [tx_hash(raw) for raw in raws]
-    for raw in raws:
+    assert responses[0]["result"] == tx_hash(raws[0])
+    forwarded = []
+    for raw, response in zip(raws, responses, strict=True):
+        (record,) = records_for(proxy, tx_hash(raw))
+        if "result" in response:
+            assert record["decision"] == "allow"
+            forwarded.append(raw)
+        else:
+            assert "nonce may be too high" in response["error"]["message"]
+            assert record["decision"] == "block"
+            assert rpc_result(anvil.url, "eth_getTransactionByHash", [tx_hash(raw)]) is None
+    # Forwarded ones are a prefix: once one is blocked, its successors can't run.
+    assert forwarded == raws[: len(forwarded)]
+    for raw in forwarded:
         assert wait_for_receipt(proxy.url, tx_hash(raw))["status"] == "0x1"
-        assert len(records_for(proxy, tx_hash(raw))) == 1
-    assert next_nonce(proxy.url) == first + 3
 
 
 def test_wrong_chain_transaction_never_reaches_anvil(proxy: Proxy, anvil: Service) -> None:

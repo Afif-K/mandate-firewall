@@ -18,6 +18,7 @@ from mandate_firewall.simulate.node import (
     SimulatorNode,
     SimulatorStartupError,
     fetch_fork_point,
+    resolve_network,
 )
 
 URL = "http://upstream.test:8545/v2/SECRET-API-KEY"
@@ -128,6 +129,7 @@ async def test_spawns_anvil_hardened(
     assert argv[argv.index("--host") + 1] == "127.0.0.1"
     assert argv[argv.index("--accounts") + 1] == "0"
     assert {"--quiet", "--no-mining"} <= set(argv)
+    assert argv[argv.index("--network") + 1] == "ethereum"  # the default
     assert not any("fork" in arg or "SECRET" in arg for arg in argv)
 
     home = captured["env"]["HOME"]
@@ -136,3 +138,21 @@ async def test_spawns_anvil_hardened(
     for stream in ("stdin", "stdout", "stderr"):
         assert captured[stream] is subprocess.DEVNULL
     assert not Path(home).exists()  # deleted when start() gave up
+
+
+@pytest.mark.parametrize(
+    ("setting", "chain_id", "expected"),
+    [
+        ("auto", 8453, "optimism"),  # Base
+        ("auto", 84532, "optimism"),  # Base Sepolia
+        ("auto", 10, "optimism"),  # OP Mainnet
+        ("auto", 11155420, "optimism"),  # OP Sepolia
+        ("auto", 1, "ethereum"),
+        ("auto", 31337, "ethereum"),
+        ("auto", 7777777, "ethereum"),  # an OP-stack chain we don't know: set it explicitly
+        ("optimism", 7777777, "optimism"),
+        ("ethereum", 8453, "ethereum"),  # an explicit setting wins
+    ],
+)
+def test_resolve_network(setting: Any, chain_id: int, expected: str) -> None:
+    assert resolve_network(setting, chain_id) == expected

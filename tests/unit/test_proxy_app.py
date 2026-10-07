@@ -7,7 +7,8 @@ just what the agent got back but what did (or did not) reach the node.
 import json
 import logging
 import traceback
-from collections.abc import Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 import httpx
@@ -19,6 +20,14 @@ from fastapi.testclient import TestClient
 
 from mandate_firewall.audit import AuditLog, AuditLogError
 from mandate_firewall.config import Settings
+from mandate_firewall.models import (
+    CallFrame,
+    CallType,
+    DecodedTransaction,
+    Effects,
+    NativeBalanceChange,
+    SimulationStatus,
+)
 from mandate_firewall.proxy import app as app_module
 from mandate_firewall.proxy.app import UpstreamUnavailableError, create_app
 from mandate_firewall.proxy.jsonrpc import (
@@ -29,6 +38,9 @@ from mandate_firewall.proxy.jsonrpc import (
     RESOURCE_UNAVAILABLE,
     TRANSACTION_REJECTED,
 )
+from mandate_firewall.proxy.upstream import UpstreamClient
+from mandate_firewall.simulate.node import SimulatorStartupError
+from mandate_firewall.simulate.simulator import TransactionRejectedError
 
 UPSTREAM = "http://upstream.test:8545"
 CHAIN_ID = 84532  # Base Sepolia
@@ -90,9 +102,47 @@ class FakeNode:
         return [c["method"] for c in self.calls]
 
 
-def make_client(node: FakeNode, **settings: Any) -> TestClient:
+class FakeSimulator:
+    """Stands in for the anvil fork: records what it was asked to simulate
+    and returns plausible effects, a revert, or raises `outcome`."""
+
+    def __init__(self) -> None:
+        self.txs: list[DecodedTransaction] = []
+        self.outcome: str | BaseException = "success"
+        self.chain_id: int | None = None  # what the proxy started it with
+
+    async def simulate(self, tx: DecodedTransaction) -> Effects:
+        self.txs.append(tx)
+        if isinstance(self.outcome, BaseException):
+            raise self.outcome
+        reverted = self.outcome == "revert"
+        return Effects(
+            tx_hash=tx.hash,
+            sender=tx.sender,
+            chain_id=CHAIN_ID,
+            fork_block_number=1234,
+            fork_block_hash="0x" + "22" * 32,
+            status=SimulationStatus.REVERTED if reverted else SimulationStatus.SUCCESS,
+            revert_data="0x" if reverted else None,
+            gas_used=21_000,
+            effective_gas_price=1,
+            gas_cost=21_000,
+            native_balance_changes=(NativeBalanceChange(address=tx.sender, delta=-21_000),),
+            calls=(CallFrame(depth=0, call_type=CallType.CALL, caller=tx.sender, target=tx.to),),
+        )
+
+    def factory(self, settings: Settings, upstream: UpstreamClient, chain_id: int) -> Any:
+        @asynccontextmanager
+        async def running() -> AsyncIterator["FakeSimulator"]:
+            self.chain_id = chain_id
+            yield self
+
+        return running()
+
+
+def make_client(node: FakeNode, simulator: FakeSimulator | None = None, **settings: Any):
     cfg = Settings(_env_file=None, upstream_rpc_url=UPSTREAM, **settings)  # type: ignore[call-arg]
-    return TestClient(create_app(cfg))
+    return TestClient(create_app(cfg, (simulator or FakeSimulator()).factory))
 
 
 @pytest.fixture
@@ -108,8 +158,15 @@ def mock_upstream(node: FakeNode) -> Iterator[respx.MockRouter]:
 
 
 @pytest.fixture
-def client(node: FakeNode, mock_upstream: respx.MockRouter) -> Iterator[TestClient]:
-    with make_client(node) as c:
+def simulator() -> FakeSimulator:
+    return FakeSimulator()
+
+
+@pytest.fixture
+def client(
+    node: FakeNode, simulator: FakeSimulator, mock_upstream: respx.MockRouter
+) -> Iterator[TestClient]:
+    with make_client(node, simulator) as c:
         assert node.methods == ["eth_chainId"]  # the startup check
         node.calls.clear()
         yield c
@@ -185,7 +242,7 @@ def test_startup_error_does_not_leak_url_path() -> None:
         router.post(url).mock(side_effect=httpx.ConnectError(f"failed: {url}"))
         cfg = Settings(_env_file=None, upstream_rpc_url=url)  # type: ignore[call-arg]
         with pytest.raises(UpstreamUnavailableError) as excinfo:
-            with TestClient(create_app(cfg)):
+            with TestClient(create_app(cfg, FakeSimulator().factory)):
                 pass
     # The server logs the whole traceback, chained causes included.
     full_traceback = "".join(traceback.format_exception(excinfo.value))
@@ -528,3 +585,97 @@ def test_bad_send_raw_params(client: TestClient, node: FakeNode, params: Any) ->
     body = client.post("/", json=rpc("eth_sendRawTransaction", params)).json()
     assert error_code(body) == INVALID_PARAMS
     assert node.calls == []
+
+
+# --- simulation -------------------------------------------------------------------
+
+
+def test_simulator_starts_with_the_verified_chain_id(
+    client: TestClient, simulator: FakeSimulator
+) -> None:
+    assert simulator.chain_id == CHAIN_ID
+
+
+def test_refuses_to_start_when_simulator_fails(node: FakeNode) -> None:
+    def failing(settings: Settings, upstream: UpstreamClient, chain_id: int) -> Any:
+        @asynccontextmanager
+        async def running() -> AsyncIterator[None]:
+            secret = ValueError("cannot reach http://upstream.test/v2/SECRET-API-KEY")
+            raise SimulatorStartupError("simulation node failed to start") from secret
+            yield
+
+        return running()
+
+    with respx.mock() as router:
+        router.post(UPSTREAM).mock(side_effect=node)
+        cfg = Settings(_env_file=None, upstream_rpc_url=UPSTREAM)  # type: ignore[call-arg]
+        with pytest.raises(SimulatorStartupError) as excinfo:
+            with TestClient(create_app(cfg, failing)):
+                pass
+    assert "SECRET-API-KEY" not in "".join(traceback.format_exception(excinfo.value))
+
+
+def test_allowed_transaction_is_simulated_and_its_effects_audited(
+    client: TestClient, node: FakeNode, simulator: FakeSimulator
+) -> None:
+    raw = sign()
+    body = client.post("/", json=rpc("eth_sendRawTransaction", [raw])).json()
+    assert "result" in body
+    (tx,) = simulator.txs
+    assert tx.raw == raw
+    assert node.methods == ["eth_sendRawTransaction"]
+    (record,) = audit_records()
+    assert record["decision"] == "allow"
+    assert record["simulation_error"] is None
+    effects = record["effects"]
+    assert (effects["tx_hash"], effects["status"]) == (tx.hash, "success")
+    assert effects["native_balance_changes"] == [{"address": SENDER, "delta": "-21000"}]
+
+
+def test_reverting_transaction_is_blocked(
+    client: TestClient, node: FakeNode, simulator: FakeSimulator
+) -> None:
+    simulator.outcome = "revert"
+    body = client.post("/", json=rpc("eth_sendRawTransaction", [sign()])).json()
+    assert error_code(body) == TRANSACTION_REJECTED
+    assert body["error"]["message"] == "transaction rejected: transaction reverts in simulation"
+    assert node.calls == []
+    (record,) = audit_records()
+    assert record["decision"] == "block"
+    assert record["effects"]["status"] == "reverted"  # what it would have done
+
+
+def test_simulation_error_blocks_with_its_reason(
+    client: TestClient, node: FakeNode, simulator: FakeSimulator
+) -> None:
+    reason = "the simulated chain rejected the transaction: nonce too low"
+    simulator.outcome = TransactionRejectedError(reason)
+    body = client.post("/", json=rpc("eth_sendRawTransaction", [sign()])).json()
+    assert error_code(body) == TRANSACTION_REJECTED
+    assert body["error"]["message"] == f"transaction rejected: {reason}"
+    assert node.calls == []
+    (record,) = audit_records()
+    assert (record["decision"], record["simulation_error"], record["effects"]) == (
+        "block",
+        reason,
+        None,
+    )
+
+
+def test_simulator_crash_blocks_without_leaking_details(
+    client: TestClient, node: FakeNode, simulator: FakeSimulator
+) -> None:
+    simulator.outcome = RuntimeError("internal detail: http://upstream.test/v2/SECRET")
+    body = client.post("/", json=rpc("eth_sendRawTransaction", [sign()])).json()
+    assert error_code(body) == TRANSACTION_REJECTED
+    assert body["error"]["message"] == "transaction rejected: simulation failed: internal error"
+    assert "SECRET" not in json.dumps(audit_records())
+    assert node.calls == []
+
+
+def test_transactions_blocked_by_checks_are_not_simulated(
+    client: TestClient, simulator: FakeSimulator
+) -> None:
+    client.post("/", json=rpc("eth_sendRawTransaction", [sign(chainId=1)]))
+    client.post("/", json=rpc("eth_sendRawTransaction", ["0xdeadbeef"]))
+    assert simulator.txs == []

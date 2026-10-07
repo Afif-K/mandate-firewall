@@ -20,6 +20,47 @@ from pydantic import (
 # as 64-bit floats, silently rounding anything above 2**53.
 BigInt = Annotated[int, PlainSerializer(str, return_type=str, when_used="json")]
 
+# Strict value types, for decoded transactions and simulated effects:
+# - Addresses are EIP-55 checksummed and other hex is lowercased, so each
+#   value has one spelling and "is X in this set" checks can't miss on case.
+# - Integers are range-checked and serialize as decimal strings (like BigInt).
+UINT256_MAX = 2**256 - 1
+_DECIMAL = re.compile(r"-?(0|[1-9][0-9]{0,77})")
+
+
+def _strict_int(value: Any) -> Any:
+    """Accept an int (not a bool) or a canonical decimal string, as written by
+    the JSON serializer. Plain int fields would also take True, 1.0 or "1_0"."""
+    if isinstance(value, bool):
+        raise ValueError("expected an integer, not a bool")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and _DECIMAL.fullmatch(value):
+        return int(value)
+    raise ValueError("expected an integer or a decimal string")
+
+
+def _checksum(value: str) -> str:
+    """EIP-55 checksum. Mixed-case input must already be a valid checksum: a
+    wrong one usually means a corrupted address."""
+    checksummed = to_checksum_address(value)
+    digits = value[2:]  # not the "0x": uppercasing it would give "0X"
+    if digits != digits.lower() and digits != digits.upper() and value != checksummed:
+        raise ValueError("address has an invalid EIP-55 checksum")
+    return checksummed
+
+
+_IntJson = PlainSerializer(str, return_type=str, when_used="json")
+Uint256 = Annotated[int, BeforeValidator(_strict_int), Field(ge=0, le=UINT256_MAX), _IntJson]
+# A change in a uint256 balance: anywhere from -(2**256 - 1) to 2**256 - 1.
+Uint256Delta = Annotated[
+    int, BeforeValidator(_strict_int), Field(ge=-UINT256_MAX, le=UINT256_MAX), _IntJson
+]
+Address = Annotated[str, Field(pattern=r"^0x[0-9a-fA-F]{40}$"), AfterValidator(_checksum)]
+Hash32 = Annotated[str, Field(pattern=r"^0x[0-9a-fA-F]{64}$"), AfterValidator(str.lower)]
+HexData = Annotated[str, Field(pattern=r"^0x(?:[0-9a-fA-F]{2})*$"), AfterValidator(str.lower)]
+Selector = Annotated[str, Field(pattern=r"^0x[0-9a-fA-F]{8}$"), AfterValidator(str.lower)]
+
 
 class TxType(IntEnum):
     """EIP-2718 transaction types the decoder supports."""
@@ -32,8 +73,8 @@ class TxType(IntEnum):
 class AccessListEntry(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    address: str  # checksummed
-    storage_keys: tuple[str, ...]  # 0x-prefixed 32-byte hex
+    address: Address
+    storage_keys: tuple[Hash32, ...]
 
 
 class DecodedTransaction(BaseModel):
@@ -47,19 +88,19 @@ class DecodedTransaction(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     tx_type: TxType
-    hash: str  # keccak256 of the raw bytes, 0x-prefixed
-    chain_id: int | None  # None only for pre-EIP-155 legacy transactions (replayable)
-    nonce: int
-    sender: str  # checksummed, recovered from the signature
-    to: str | None  # checksummed; None means contract creation
-    value: int  # wei
-    data: str  # calldata, 0x-prefixed hex
-    gas_limit: int
-    gas_price: int | None = None  # types 0 and 1
-    max_fee_per_gas: int | None = None  # type 2
-    max_priority_fee_per_gas: int | None = None  # type 2
+    hash: Hash32  # keccak256 of the raw bytes
+    chain_id: Uint256 | None  # None only for pre-EIP-155 legacy transactions (replayable)
+    nonce: Uint256
+    sender: Address  # recovered from the signature
+    to: Address | None  # None means contract creation
+    value: Uint256  # wei
+    data: HexData  # calldata
+    gas_limit: Uint256
+    gas_price: Uint256 | None = None  # types 0 and 1
+    max_fee_per_gas: Uint256 | None = None  # type 2
+    max_priority_fee_per_gas: Uint256 | None = None  # type 2
     access_list: tuple[AccessListEntry, ...] = ()
-    raw: str  # the exact bytes we decoded, 0x-prefixed hex
+    raw: HexData  # the exact bytes we decoded
 
 
 class CallKind(StrEnum):
@@ -106,46 +147,7 @@ class Decision(StrEnum):
 # - Every string field is a constrained hex value or an address. There is no
 #   field that can hold free text, so attacker-chosen text (token names, revert
 #   messages) can't reach the verifier through effects.
-# - Values are canonical: addresses EIP-55 checksummed, other hex lowercase.
-#   One spelling per value, so "is X in this set" checks can't miss on case.
-# - Amounts are range-checked integers, serialized as decimal strings (BigInt).
-
-UINT256_MAX = 2**256 - 1
-_DECIMAL = re.compile(r"-?(0|[1-9][0-9]{0,77})")
-
-
-def _strict_int(value: Any) -> Any:
-    """Accept an int (not a bool) or a canonical decimal string, as written by
-    the JSON serializer. Plain int fields would also take True, 1.0 or "1_0"."""
-    if isinstance(value, bool):
-        raise ValueError("expected an integer, not a bool")
-    if isinstance(value, int):
-        return value
-    if isinstance(value, str) and _DECIMAL.fullmatch(value):
-        return int(value)
-    raise ValueError("expected an integer or a decimal string")
-
-
-def _checksum(value: str) -> str:
-    """EIP-55 checksum. Mixed-case input must already be a valid checksum: a
-    wrong one usually means a corrupted address."""
-    checksummed = to_checksum_address(value)
-    digits = value[2:]  # not the "0x": uppercasing it would give "0X"
-    if digits != digits.lower() and digits != digits.upper() and value != checksummed:
-        raise ValueError("address has an invalid EIP-55 checksum")
-    return checksummed
-
-
-_IntJson = PlainSerializer(str, return_type=str, when_used="json")
-Uint256 = Annotated[int, BeforeValidator(_strict_int), Field(ge=0, le=UINT256_MAX), _IntJson]
-# A change in a uint256 balance: anywhere from -(2**256 - 1) to 2**256 - 1.
-Uint256Delta = Annotated[
-    int, BeforeValidator(_strict_int), Field(ge=-UINT256_MAX, le=UINT256_MAX), _IntJson
-]
-Address = Annotated[str, Field(pattern=r"^0x[0-9a-fA-F]{40}$"), AfterValidator(_checksum)]
-Hash32 = Annotated[str, Field(pattern=r"^0x[0-9a-fA-F]{64}$"), AfterValidator(str.lower)]
-HexData = Annotated[str, Field(pattern=r"^0x(?:[0-9a-fA-F]{2})*$"), AfterValidator(str.lower)]
-Selector = Annotated[str, Field(pattern=r"^0x[0-9a-fA-F]{8}$"), AfterValidator(str.lower)]
+# - Values use the strict types defined at the top of this module.
 
 
 class _Effect(BaseModel):

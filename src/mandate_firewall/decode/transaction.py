@@ -21,6 +21,7 @@ import rlp
 from eth_keys import keys
 from eth_keys.exceptions import BadSignature
 from eth_utils import keccak, to_checksum_address
+from pydantic import ValidationError
 
 from mandate_firewall.models import AccessListEntry, DecodedTransaction, TxType
 
@@ -77,9 +78,14 @@ def decode_raw_transaction(raw: str | bytes) -> DecodedTransaction:
             f"type {tx_type} transaction must have {expected} fields, got {len(fields)}"
         )
 
-    if tx_type is TxType.LEGACY:
-        return _decode_legacy(fields, raw_bytes)
-    return _decode_typed(tx_type, fields, raw_bytes)
+    try:
+        if tx_type is TxType.LEGACY:
+            return _decode_legacy(fields, raw_bytes)
+        return _decode_typed(tx_type, fields, raw_bytes)
+    except ValidationError as exc:
+        # The checks above should make this unreachable. If they ever miss
+        # something the model rejects, it's still a decode error, not a crash.
+        raise TransactionDecodeError("decoded fields fail validation") from exc
 
 
 def _decode_legacy(fields: list[Any], raw_bytes: bytes) -> DecodedTransaction:

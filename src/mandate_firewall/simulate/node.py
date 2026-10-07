@@ -25,6 +25,10 @@ in the M2 commit 1 spike (see docs/m2-plan.md):
   and shared with every other Foundry tool. A stale or tampered file there
   would make simulations lie. A private cache is deleted with the node.
 - Nothing else from our environment, so the node gets none of our secrets.
+- --network ethereum|optimism. OP-stack chains (Base, OP Mainnet) need
+  anvil's optimism mode for their deposit transactions and predeploys.
+  Even in that mode anvil doesn't charge the L1 data fee, so a sender's ETH
+  change on those chains is smaller than it will really be.
 """
 
 import asyncio
@@ -35,7 +39,7 @@ import socket
 import subprocess
 import tempfile
 import time
-from typing import Any
+from typing import Any, Literal
 
 from eth_account import Account
 from pydantic import BaseModel, ConfigDict, Field
@@ -49,6 +53,21 @@ STOP_TIMEOUT_SECONDS = 10.0
 SIMPLE_TRANSFER_GAS = 21_000
 
 _HASH = re.compile(r"0x[0-9a-f]{64}")
+
+SimulatorNetwork = Literal["ethereum", "optimism"]
+# Chains that run the OP stack: OP Mainnet, Base, Base Sepolia, OP Sepolia.
+# Other OP-stack chains set SIMULATOR_NETWORK=optimism explicitly.
+OP_STACK_CHAIN_IDS = frozenset({10, 8453, 84532, 11155420})
+
+
+def resolve_network(
+    setting: Literal["auto", "ethereum", "optimism"], chain_id: int
+) -> SimulatorNetwork:
+    """The anvil --network for a chain: an explicit setting wins, and "auto"
+    picks optimism for the OP-stack chains we know."""
+    if setting != "auto":
+        return setting
+    return "optimism" if chain_id in OP_STACK_CHAIN_IDS else "ethereum"
 
 
 class SimulatorError(Exception):
@@ -94,10 +113,17 @@ class SimulatorNode:
     fork() moves it to a new upstream block with the same checks.
     """
 
-    def __init__(self, anvil_path: str, upstream_url: str, chain_id: int) -> None:
+    def __init__(
+        self,
+        anvil_path: str,
+        upstream_url: str,
+        chain_id: int,
+        network: SimulatorNetwork = "ethereum",
+    ) -> None:
         self._anvil_path = anvil_path
         self._upstream_url = upstream_url
         self._chain_id = chain_id
+        self._network = network
         self._process: subprocess.Popen[bytes] | None = None
         self._client: UpstreamClient | None = None
         self._home: str | None = None
@@ -133,7 +159,12 @@ class SimulatorNode:
         except BaseException:
             await self.stop()
             raise
-        logger.info("simulation node ready (pid %d), forked at block %d", self.pid, point.number)
+        logger.info(
+            "simulation node ready (pid %d, %s mode), forked at block %d",
+            self.pid,
+            self._network,
+            point.number,
+        )
 
     async def fork(self, point: ForkPoint) -> None:
         """Reset the node to a fresh fork of the upstream at `point`.
@@ -202,6 +233,8 @@ class SimulatorNode:
             "--no-mining",
             "--accounts",
             "0",
+            "--network",
+            self._network,
         ]
         self._process = subprocess.Popen(  # noqa: S603 - fixed argv, resolved binary
             argv,

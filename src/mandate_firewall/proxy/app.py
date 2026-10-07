@@ -4,14 +4,18 @@ Request flow:
     HTTP body -> size/content-type checks -> JSON parse -> single or batch
     -> per request: validate -> classify method -> deny | forward | intercept
 
+An intercepted transaction is decoded, checked, simulated on the private
+fork, audited, and only then forwarded. It is blocked if any step fails or
+if it reverts in simulation.
+
 Run it with `mandate-firewall serve` (see cli.py), which also sets up logging.
 """
 
 import json
 import logging
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
-from typing import Any
+from collections.abc import AsyncIterator, Callable
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
+from typing import Any, Protocol
 
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
@@ -20,7 +24,7 @@ from mandate_firewall.audit import AuditLog, AuditLogError, AuditRecord
 from mandate_firewall.config import Settings, redact_url
 from mandate_firewall.decode.calldata import decode_calldata
 from mandate_firewall.decode.transaction import TransactionDecodeError, decode_raw_transaction
-from mandate_firewall.models import Decision, DecodedTransaction
+from mandate_firewall.models import Decision, DecodedTransaction, Effects, SimulationStatus
 from mandate_firewall.proxy.jsonrpc import (
     INVALID_PARAMS,
     INVALID_REQUEST,
@@ -36,6 +40,8 @@ from mandate_firewall.proxy.jsonrpc import (
 )
 from mandate_firewall.proxy.methods import MethodClass, classify
 from mandate_firewall.proxy.upstream import UpstreamClient, UpstreamError
+from mandate_firewall.simulate.node import SimulatorNode, SimulatorStartupError, resolve_network
+from mandate_firewall.simulate.simulator import SimulationError, Simulator
 
 logger = logging.getLogger(__name__)
 
@@ -48,17 +54,53 @@ class UpstreamUnavailableError(RuntimeError):
     """Raised at startup when the upstream chain id can't be fetched."""
 
 
+class TransactionSimulator(Protocol):
+    async def simulate(self, tx: DecodedTransaction) -> Effects: ...
+
+
+# Starts a simulator for the verified upstream and stops it on exit. Tests
+# substitute a fake; there is deliberately no setting that skips simulation.
+SimulatorFactory = Callable[
+    [Settings, UpstreamClient, int], AbstractAsyncContextManager[TransactionSimulator]
+]
+
+
+@asynccontextmanager
+async def start_simulator(
+    settings: Settings, upstream: UpstreamClient, chain_id: int
+) -> AsyncIterator[TransactionSimulator]:
+    """The real simulator: a private anvil fork of the upstream."""
+    network = resolve_network(settings.simulator_network, chain_id)
+    node = SimulatorNode(settings.anvil_path, str(settings.upstream_rpc_url), chain_id, network)
+    await node.start(upstream)  # SimulatorStartupError: refuse to start
+    try:
+        yield Simulator(
+            node,
+            upstream,
+            timeout_seconds=settings.simulation_timeout_seconds,
+            max_token_state_checks=settings.max_token_state_checks,
+        )
+    finally:
+        await node.stop()
+
+
 class Proxy:
     """Per-request JSON-RPC handling. Holds the upstream client, the chain id
-    that was verified at startup, and the audit log."""
+    that was verified at startup, the audit log and the simulator."""
 
     def __init__(
-        self, upstream: UpstreamClient, chain_id: int, settings: Settings, audit: AuditLog
+        self,
+        upstream: UpstreamClient,
+        chain_id: int,
+        settings: Settings,
+        audit: AuditLog,
+        simulator: TransactionSimulator,
     ) -> None:
         self.upstream = upstream
         self.chain_id = chain_id
         self.settings = settings
         self.audit = audit
+        self.simulator = simulator
 
     async def handle(self, obj: Any) -> dict[str, Any]:
         """Handle one request object. Always returns a response; never raises."""
@@ -126,7 +168,32 @@ class Proxy:
             f" {call.signature}" if call.signature else "",
         )
         try:
-            self.audit.write(AuditRecord.for_transaction(tx, call, Decision.ALLOW))
+            effects = await self.simulator.simulate(tx)
+        except SimulationError as exc:
+            # Fail closed. The message is safe to return (see SimulationError).
+            record = AuditRecord.for_transaction(
+                tx, call, Decision.BLOCK, str(exc), simulation_error=str(exc)
+            )
+            return self._block(request.id, record)
+        except Exception:
+            # A bug, not a verdict on the transaction. Still fail closed.
+            logger.exception("simulator crashed on tx %s", tx.hash)
+            reason = "simulation failed: internal error"
+            record = AuditRecord.for_transaction(
+                tx, call, Decision.BLOCK, reason, simulation_error=reason
+            )
+            return self._block(request.id, record)
+
+        if effects.status is SimulationStatus.REVERTED:
+            # At best it wastes gas. At worst it succeeds on chain because
+            # state changed after we simulated, doing something we never saw.
+            record = AuditRecord.for_transaction(
+                tx, call, Decision.BLOCK, "transaction reverts in simulation", effects=effects
+            )
+            return self._block(request.id, record)
+
+        try:
+            self.audit.write(AuditRecord.for_transaction(tx, call, Decision.ALLOW, effects=effects))
         except AuditLogError as exc:
             # Fail closed: nothing reaches the chain without an audit record.
             logger.error("blocked transaction %s: %s", tx.hash, exc)
@@ -163,36 +230,41 @@ class Proxy:
         )
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None, simulator_factory: SimulatorFactory | None = None
+) -> FastAPI:
     settings = settings or Settings()
+    start = simulator_factory or start_simulator
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         upstream_name = redact_url(settings.upstream_rpc_url)
-        # Opened first, so an unwritable audit log stops startup like an
-        # unreachable upstream does: we never run without either.
-        audit = AuditLog(settings.audit_log_path)
-        upstream = UpstreamClient(str(settings.upstream_rpc_url))
-        try:
-            # Fail closed: without the upstream's chain id we can't check that
-            # transactions are for this chain, so we refuse to start at all.
-            chain_id = await upstream.fetch_chain_id()
-        except UpstreamError as exc:
-            await upstream.aclose()
-            audit.close()
-            # "from None": the server prints the whole exception chain, and the
-            # underlying httpx error text can contain the URL and its API key.
-            raise UpstreamUnavailableError(
-                f"cannot fetch chain id from upstream {upstream_name}: {exc}"
-            ) from None
-        logger.info("upstream %s, chain id %d", upstream_name, chain_id)
-        logger.info("audit log %s", settings.audit_log_path)
-        app.state.proxy = Proxy(upstream, chain_id, settings, audit)
-        try:
+        async with AsyncExitStack() as stack:
+            # Opened first, so an unwritable audit log stops startup like an
+            # unreachable upstream does: we never run without either.
+            audit = AuditLog(settings.audit_log_path)
+            stack.callback(audit.close)
+            upstream = UpstreamClient(str(settings.upstream_rpc_url))
+            stack.push_async_callback(upstream.aclose)
+            try:
+                # Fail closed: without the upstream's chain id we can't check that
+                # transactions are for this chain, so we refuse to start at all.
+                chain_id = await upstream.fetch_chain_id()
+            except UpstreamError as exc:
+                # "from None": the server prints the whole exception chain, and the
+                # underlying httpx error text can contain the URL and its API key.
+                raise UpstreamUnavailableError(
+                    f"cannot fetch chain id from upstream {upstream_name}: {exc}"
+                ) from None
+            logger.info("upstream %s, chain id %d", upstream_name, chain_id)
+            logger.info("audit log %s", settings.audit_log_path)
+            try:
+                # Fail closed: no simulator, no firewall.
+                simulator = await stack.enter_async_context(start(settings, upstream, chain_id))
+            except SimulatorStartupError as exc:
+                raise SimulatorStartupError(str(exc)) from None  # same reason as above
+            app.state.proxy = Proxy(upstream, chain_id, settings, audit, simulator)
             yield
-        finally:
-            await upstream.aclose()
-            audit.close()
 
     # No /docs or /openapi.json: the only endpoint is POST /.
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)

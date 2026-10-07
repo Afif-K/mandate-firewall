@@ -37,10 +37,14 @@ class Service:
     log: Path
 
 
-def start(name: str, argv: list[str], port: int, workdir: Path) -> Service:
+def start(
+    name: str, argv: list[str], port: int, workdir: Path, env: dict[str, str] | None = None
+) -> Service:
     log = workdir / f"{name}.log"
     with open(log, "wb") as out:
-        process = subprocess.Popen(argv, cwd=workdir, stdout=out, stderr=subprocess.STDOUT)  # noqa: S603
+        process = subprocess.Popen(  # noqa: S603
+            argv, cwd=workdir, stdout=out, stderr=subprocess.STDOUT, env=env
+        )
     service = Service(f"http://127.0.0.1:{port}", process, log)
 
     deadline = time.monotonic() + STARTUP_TIMEOUT_SECONDS
@@ -89,22 +93,31 @@ class Proxy(Service):
         return [json.loads(line) for line in self.audit_log.read_text().splitlines()]
 
 
-@pytest.fixture(scope="module")
-def proxy(anvil: Service, workdir: Path) -> Iterator[Proxy]:
+def start_proxy(
+    upstream: Service, workdir: Path, name: str = "proxy", env: dict[str, str] | None = None
+) -> Proxy:
+    """`mandate-firewall serve` in front of `upstream`, with its own private
+    simulation fork (an anvil child process)."""
     port = free_port()
-    audit_log = workdir / "audit.jsonl"
+    audit_log = workdir / f"{name}-audit.jsonl"
     argv = [
         sys.executable,
         "-m",
         "mandate_firewall",
         "serve",
         "--upstream",
-        anvil.url,
+        upstream.url,
         "--port",
         str(port),
         "--audit-log",
         str(audit_log),
     ]
-    service = start("proxy", argv, port, workdir)
-    yield Proxy(service.url, service.process, service.log, audit_log)
+    service = start(name, argv, port, workdir, env)
+    return Proxy(service.url, service.process, service.log, audit_log)
+
+
+@pytest.fixture(scope="module")
+def proxy(anvil: Service, workdir: Path) -> Iterator[Proxy]:
+    service = start_proxy(anvil, workdir)
+    yield service
     stop(service)

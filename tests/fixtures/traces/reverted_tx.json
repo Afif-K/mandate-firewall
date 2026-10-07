@@ -1,0 +1,30 @@
+{
+  "description": "The transaction itself reverts: CALL the child, which calls the sink and reverts",
+  "anvil": "anvil Version: 1.8.3",
+  "sender": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+  "tx_hash": "0x7ee8d6178ffdad0f597e01c8ecf0f50d16fcdd984aacf98b7f5bd213105e54b1",
+  "status": "0x0",
+  "child": "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9",
+  "sink": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+  "trace": {
+    "from": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+    "gas": "0xef038",
+    "gasUsed": "0x5c45",
+    "to": "0xcf7ed3acca5a467e9e704c703e8d87f634fb0fc9",
+    "input": "0x",
+    "error": "execution reverted",
+    "calls": [
+      {
+        "from": "0xcf7ed3acca5a467e9e704c703e8d87f634fb0fc9",
+        "gas": "0xeaa69",
+        "gasUsed": "0x0",
+        "to": "0x5fbdb2315678afecb367f032d93f642f64180aa3",
+        "input": "0x",
+        "value": "0x0",
+        "type": "CALL"
+      }
+    ],
+    "value": "0x0",
+    "type": "CALL"
+  }
+}

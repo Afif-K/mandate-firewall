@@ -1,0 +1,30 @@
+{
+  "description": "A contract-creation transaction (no `to`) with 3 wei whose constructor sends 2 wei to the sink",
+  "anvil": "anvil Version: 1.8.3",
+  "sender": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+  "tx_hash": "0x800e0019c02d9884b0fbe94a71dc2be020f4834977b443919bcce87597253e95",
+  "status": "0x1",
+  "created": "0x2279b7a0a67db372996a5fab50d91eaa73d2ebe6",
+  "sink": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+  "trace": {
+    "from": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+    "gas": "0xe70e4",
+    "gasUsed": "0xf699",
+    "to": "0x2279b7a0a67db372996a5fab50d91eaa73d2ebe6",
+    "input": "0x5f5f5f5f6002735fbdb2315678afecb367f032d93f642f64180aa35af1505f5f5360015ff3",
+    "output": "0x00",
+    "calls": [
+      {
+        "from": "0x2279b7a0a67db372996a5fab50d91eaa73d2ebe6",
+        "gas": "0xe1372",
+        "gasUsed": "0x0",
+        "to": "0x5fbdb2315678afecb367f032d93f642f64180aa3",
+        "input": "0x",
+        "value": "0x2",
+        "type": "CALL"
+      }
+    ],
+    "value": "0x3",
+    "type": "CREATE"
+  }
+}

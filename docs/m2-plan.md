@@ -1,6 +1,6 @@
 # M2 plan: simulation that produces structured effects
 
-Status: **approved 2026-10-06**. Commits 0–3 done. Next step: commit 4 (trace parser).
+Status: **approved 2026-10-06**. Commits 0–4 done. Next step: commit 5 (test contract fixtures).
 
 ## Decisions (agreed 2026-10-06)
 
@@ -172,7 +172,7 @@ Rules: there's no "simulation disabled" switch. Any exception inside `simulate()
    *Verify:* unit tests for frozen behavior, signed `BigInt` deltas serializing as strings, and round-trip JSON.
 3. **Log decoder** (`simulate/logs.py`, pure). Receipt logs → transfers, approvals, operator approvals, raw logs. **Done.** A log the node returns in an invalid shape (bad hex, >4 topics, `removed`, another tx's hash, out-of-order index) raises `LogDecodeError`, so the simulation fails. A valid log that isn't exactly a registered event goes to `unrecognized`.
    *Verify:* unit tests on hand-built logs: ERC-20 vs ERC-721 via topic count, dirty address padding, wrong data length, unknown topic0 → `unrecognized_logs`, extra topics → unrecognized.
-4. **Trace parser** (`simulate/trace.py`, pure). callTracer JSON → `CallFrame`s, touched addresses, created contracts.
+4. **Trace parser** (`simulate/trace.py`, pure). callTracer JSON → `CallFrame`s, touched addresses, created contracts. **Done.** Fixtures come from hand-assembled bytecode on real anvil (`tests/fixtures/traces/capture.py`, reproducible byte for byte). What the real traces showed: DELEGATECALL frames report the *inherited* `msg.value` (recorded as 0, and the same for CALLCODE); a failed CREATE has no `to`; a call inside a reverting call has no `error` of its own, so `reverted` means "rolled back" (the frame or any ancestor failed); and anvil decodes `Error(string)` into a `revertReason` text field, which is never read. The walk is iterative, because EVM depth 1024 is beyond Python's recursion limit. *Note for commit 6:* `touched` grows with the number of distinct addresses in the trace, and each one costs a balance read before and after. A huge trace can push the simulation past its timeout, which blocks the tx (fail closed).
    *Verify:* unit tests on callTracer JSON fixtures captured from real Anvil: nested calls, delegatecall, create, reverted subframe, selfdestruct.
 5. **Test contract fixtures** (`tests/fixtures/contracts/*.sol`, a build script, and committed bytecode, so tests don't need solc). MockERC20, MockERC721, `LyingToken` (emits a fake Transfer), `EthForwarder` (internal ETH move), `TimeBomb` (timestamp-dependent), `SimDetector` (coinbase check).
    *Verify:* the build script reproduces the committed bytecode, and a smoke test deploys each one on Anvil.

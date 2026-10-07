@@ -1,6 +1,6 @@
 # M2 plan: simulation that produces structured effects
 
-Status: **approved 2026-10-06**. Commits 0–1 done. Next step: commit 2 (effects models).
+Status: **approved 2026-10-06**. Commits 0–2 done. Next step: commit 3 (log decoder).
 
 ## Decisions (agreed 2026-10-06)
 
@@ -8,6 +8,7 @@ Status: **approved 2026-10-06**. Commits 0–1 done. Next step: commit 2 (effect
 2. M2 = commits **0–8** below. **Deferred** (not in M2): differential timestamp/block simulation and realistic coinbase (old commit 9), ERC-1155 `TransferSingle`/`TransferBatch` decoding, and Permit2 Approval event decoding. Until then they appear as `unrecognized_logs`.
 3. **Off-chain signatures** (Permit2, EIP-2612, Seaport/EIP-712) go into THREAT_MODEL.md during M2. The CLAUDE.md roadmap gets a new **pre-sign / typed-data inspection** milestone (covering at least Permit2 and EIP-2612) **before v0.1**. Both happen in commit 8.
 4. **Housekeeping commit before M2 commit 1:** remove the `httpx2` dev dependency, and handle the Starlette deprecation warning with a pytest `filterwarnings` entry that matches only that one message. (Rationale corrected 2026-10-07, see Roadmap pushback item 4.)
+5. **Simulator network mode** (decided 2026-10-07): a `SIMULATOR_NETWORK` setting, `auto` (default), `optimism` or `ethereum`. `auto` chooses from the upstream chain id. See "Spike findings". Implemented in commit 6 or 7.
 
 ## Context
 
@@ -64,7 +65,7 @@ Both things the plan depends on work: `anvil_reset({forking: {jsonRpcUrl, blockN
 - **`evm_revert` to a used snapshot returns `false`,** not an error. It must be checked.
 - **Dev accounts get 10000 ETH on a fork by default,** which overwrites their real balances. Those addresses are public and used on real chains, so the node runs with `--accounts 0`. That also leaves it with no signing keys.
 - **anvil caches forked state in `~/.foundry/cache/rpc/<chain-name>/<block>/`,** keyed only by chain and block number and shared with every Foundry tool. A local fake chain claiming id 84532 wrote into `base-sepolia/`. The node runs with `HOME` set to a private `0700` temp dir (deleted on stop) and no other environment variables. `--no-storage-caching` can't be used without `--fork-url`.
-- **`--optimism` is `--network optimism` in 1.8.3,** and it works with `anvil_reset`. *Open question for commit 6/7:* turn it on for OP-stack chain ids (Base 8453 / 84532, OP 10 / 11155420), or make it a setting.
+- **`--optimism` is `--network optimism` in 1.8.3,** and it works with `anvil_reset`. *Decided 2026-10-07, implemented in commit 6 or 7:* a `SIMULATOR_NETWORK` setting with values `auto` (default), `optimism` or `ethereum`. `auto` picks `optimism` for the known OP-stack chain ids (Base 8453 / 84532, OP 10 / 11155420) and `ethereum` otherwise; other OP-stack chains set `optimism` explicitly.
 - **Fork state is read by block hash** by default (`--fork-state-by-number` opts out), which pins the state to the block we verified.
 
 ## 2. Effects: what to extract and how
@@ -120,6 +121,8 @@ class Effects(BaseModel):
     token_state_checks: tuple[TokenStateCheck, ...]
 ```
 
+**As built in commit 2** (differences from the sketch above): `TokenApproval` and `OperatorApproval` also carry `log_index`. Amounts are `Uint256` (0 to 2**256−1) and deltas are `Uint256Delta` (±(2**256−1)). Both are strict ints that serialize as decimal strings. Every string field is a validated hex type (`Address` checksummed, `Hash32`, `HexData` and `Selector` lowercased), so no field can hold free text. `Effects` enforces these invariants: gas_cost = gas_used × price; a reverted tx has no logs or created contracts; exactly one depth-0 frame, made by the sender; one balance change per address; every log index unique across the lists. Commit 6 still has to check that *every* receipt log was placed (count match).
+
 Deliberately left out of M2: ERC-1155 `TransferSingle`/`TransferBatch` decoding (they land in `unrecognized_logs`, which fails safe), and Permit2's own Approval event (also unrecognized for now). Both are easy to add once M4 shows they're needed.
 
 ## 3. Where the simulation node lives
@@ -165,7 +168,7 @@ Rules: there's no "simulation disabled" switch. Any exception inside `simulate()
    *Verify:* `uv sync`, then `uv run pytest` passes and that warning no longer shows up, `uv run ruff check .`, and `grep httpx2 uv.lock` finds nothing.
 1. **Simulator node manager** (`simulate/node.py`, settings `ANVIL_PATH`, `SIMULATION_TIMEOUT_SECONDS`, `.env.example`). **Done.** Spawn Anvil, wait until ready, `anvil_reset` into fork mode over RPC, startup checks (chain id, block hash, callTracer probe), clean shutdown. Includes a short **spike** confirming Anvil 1.8.3 supports fork-mode reset over RPC and callTracer. If it doesn't, we adjust before building more.
    *Verify:* `uv run pytest -m anvil tests/integration/test_simulator_node.py`. An "upstream" Anvil plus our fork Anvil: chain ids match, a wrong chain id refuses to start, and `ps` shows no upstream URL.
-2. **Effects models** in `models.py`.
+2. **Effects models** in `models.py`. **Done.**
    *Verify:* unit tests for frozen behavior, signed `BigInt` deltas serializing as strings, and round-trip JSON.
 3. **Log decoder** (`simulate/logs.py`, pure). Receipt logs → transfers, approvals, operator approvals, raw logs.
    *Verify:* unit tests on hand-built logs: ERC-20 vs ERC-721 via topic count, dirty address padding, wrong data length, unknown topic0 → `unrecognized_logs`, extra topics → unrecognized.

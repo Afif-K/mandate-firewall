@@ -1,13 +1,13 @@
 # M2 plan: simulation that produces structured effects
 
-Status: **approved 2026-10-06**, not started. Next step: commit 0 (housekeeping).
+Status: **approved 2026-10-06**. Commit 0 (housekeeping) done. Next step: commit 1 (simulator node manager).
 
 ## Decisions (agreed 2026-10-06)
 
 1. Simulation uses **approach B**: one long-lived Anvil fork with reset/snapshot/revert, executing the exact raw transaction.
 2. M2 = commits **0–8** below. **Deferred** (not in M2): differential timestamp/block simulation and realistic coinbase (old commit 9), ERC-1155 `TransferSingle`/`TransferBatch` decoding, and Permit2 Approval event decoding. Until then they appear as `unrecognized_logs`.
 3. **Off-chain signatures** (Permit2, EIP-2612, Seaport/EIP-712) go into THREAT_MODEL.md during M2. The CLAUDE.md roadmap gets a new **pre-sign / typed-data inspection** milestone (covering at least Permit2 and EIP-2612) **before v0.1**. Both happen in commit 8.
-4. **Housekeeping commit before M2 commit 1:** remove the unused `httpx2` dev dependency, and handle the Starlette deprecation warning with a pytest `filterwarnings` entry instead.
+4. **Housekeeping commit before M2 commit 1:** remove the `httpx2` dev dependency, and handle the Starlette deprecation warning with a pytest `filterwarnings` entry that matches only that one message. (Rationale corrected 2026-10-07, see Roadmap pushback item 4.)
 
 ## Context
 
@@ -173,4 +173,4 @@ Each commit: `uv run ruff check .` plus `uv run pytest` (with `-m anvil` for int
 1. **Off-chain signatures bypass the whole design.** Permit2 / EIP-2612 permits, Seaport orders and other EIP-712 signatures never touch `eth_sendRawTransaction`. An injected agent can sign a Permit2 approval and hand it to the attacker, who spends it from *their* account. That's the most common drainer pattern today, and our proxy never sees it. *Agreed:* it goes into THREAT_MODEL.md in M2, and a pre-sign / typed-data inspection milestone is added before v0.1.
 2. **Multi-tx flows (approve then swap).** Each tx is simulated alone against the head. If tx 2 arrives before tx 1 is mined upstream, tx 2 fails the nonce check in sim and gets blocked. That's fail closed but annoying. M2 accepts this. M4 should define "approved but not yet mined" pending state, and the mandate design (M3) should treat a sequence as one intent, since "approve X" alone means nothing without the swap that follows.
 3. **Don't over-build M2.** The new ideas are in M3/M4. *Agreed:* hardening and the extra decoders are deferred.
-4. **`httpx2` dev dependency** (published 2026-09-23). Nothing imports it, it came in with d62124c, and its name is one character off `httpx`. *Agreed:* it gets removed in commit 0.
+4. **`httpx2` dev dependency** (2.13.1, published 2026-09-23, added in d62124c). The original claim here was that nothing imports it and that its name, one character off `httpx`, suggested a typosquat. **That was wrong (corrected 2026-10-07).** Our code doesn't import it, but Starlette 1.7.0's `starlette/testclient.py` does: it tries `import httpx2 as httpx` first and falls back to `httpx` with a `StarletteDeprecationWarning`. Starlette lists `httpx2` in its `[full]` extra. The package appears to be Pydantic's: its metadata and project URLs point to `github.com/pydantic/httpx2`, a real repo owned by the Pydantic organization. However, metadata is self-declared, and the PyPI upload has **no provenance attestation** (PyPI's integrity API returns 404 for the 2.13.1 wheel, while Starlette's wheel is attested), so nothing cryptographically ties the upload to that repo. *Decision:* remove it anyway, since we don't need it. `httpx` is already a runtime dependency and the fallback works, so the dev environment loses nothing. Commit 0 filters only that one deprecation message. If a future Starlette drops the `httpx` fallback, revisit this (and check for provenance by then).

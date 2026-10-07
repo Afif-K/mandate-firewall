@@ -30,7 +30,6 @@ mandate-firewall = "mandate_firewall.cli:main"
 
 [dependency-groups]
 dev = [
-    "httpx2>=2.13.1",
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "respx>=0.21",
@@ -57,4 +56,9 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
     "anvil: integration test that needs a local anvil binary (skipped if missing)",
+]
+# Starlette's TestClient prefers httpx2 and warns when falling back to httpx. We use
+# httpx on purpose (see docs/m2-plan.md, decision 4); silence only that one message.
+filterwarnings = [
+    'ignore:Using `httpx` with `starlette\.testclient` is deprecated:starlette.exceptions.StarletteDeprecationWarning',
 ]

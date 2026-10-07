@@ -1,6 +1,6 @@
 # M2 plan: simulation that produces structured effects
 
-Status: **approved 2026-10-06**. Commits 0–2 done. Next step: commit 3 (log decoder).
+Status: **approved 2026-10-06**. Commits 0–3 done. Next step: commit 4 (trace parser).
 
 ## Decisions (agreed 2026-10-06)
 
@@ -170,7 +170,7 @@ Rules: there's no "simulation disabled" switch. Any exception inside `simulate()
    *Verify:* `uv run pytest -m anvil tests/integration/test_simulator_node.py`. An "upstream" Anvil plus our fork Anvil: chain ids match, a wrong chain id refuses to start, and `ps` shows no upstream URL.
 2. **Effects models** in `models.py`. **Done.**
    *Verify:* unit tests for frozen behavior, signed `BigInt` deltas serializing as strings, and round-trip JSON.
-3. **Log decoder** (`simulate/logs.py`, pure). Receipt logs → transfers, approvals, operator approvals, raw logs.
+3. **Log decoder** (`simulate/logs.py`, pure). Receipt logs → transfers, approvals, operator approvals, raw logs. **Done.** A log the node returns in an invalid shape (bad hex, >4 topics, `removed`, another tx's hash, out-of-order index) raises `LogDecodeError`, so the simulation fails. A valid log that isn't exactly a registered event goes to `unrecognized`.
    *Verify:* unit tests on hand-built logs: ERC-20 vs ERC-721 via topic count, dirty address padding, wrong data length, unknown topic0 → `unrecognized_logs`, extra topics → unrecognized.
 4. **Trace parser** (`simulate/trace.py`, pure). callTracer JSON → `CallFrame`s, touched addresses, created contracts.
    *Verify:* unit tests on callTracer JSON fixtures captured from real Anvil: nested calls, delegatecall, create, reverted subframe, selfdestruct.

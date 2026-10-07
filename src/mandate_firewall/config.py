@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     # Pre-EIP-155 legacy transactions carry no chain id, so a signature is valid
     # on every chain and anyone can replay it elsewhere. Off unless opted in.
     allow_legacy_unprotected: bool = False
+    # The anvil binary that runs the private simulation fork: a name on PATH or a path.
+    anvil_path: str = "anvil"
+    # Upper bound on simulating one transaction, including waiting for the
+    # simulator. A transaction that runs out of time is blocked.
+    simulation_timeout_seconds: float = Field(default=10.0, gt=0)
 
 
 def redact_url(url: AnyHttpUrl | str) -> str:

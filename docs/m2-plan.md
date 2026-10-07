@@ -1,6 +1,6 @@
 # M2 plan: simulation that produces structured effects
 
-Status: **approved 2026-10-06**. Commit 0 (housekeeping) done. Next step: commit 1 (simulator node manager).
+Status: **approved 2026-10-06**. Commits 0–1 done. Next step: commit 2 (effects models).
 
 ## Decisions (agreed 2026-10-06)
 
@@ -45,11 +45,27 @@ Example: the agent signs "transfer 50 USDC to 0xBob". On the fork, Anvil fetches
 1. Ask the upstream for its head: block number N and its hash.
 2. If the fork isn't pinned at N, or it's marked *dirty*, call `anvil_reset({forking: {jsonRpcUrl, blockNumber: N}})` and then `evm_snapshot` → S.
    Otherwise, call `evm_revert(S)` and then `evm_snapshot` → S, because Anvil uses up a snapshot when you revert to it.
-3. `eth_sendRawTransaction(raw)` with automine. Anvil mines block N+1 containing only our tx.
+3. `eth_sendRawTransaction(raw)`, then `evm_mine`. Anvil mines block N+1 containing only our tx. (Changed from automine after the spike, see "Spike findings".)
 4. Read the receipt, `debug_traceTransaction` (callTracer), and balances before and after.
 5. Revert. Any exception at any step marks the fork **dirty**, which forces a full reset before the next sim.
 
 One honest caveat: on Base (2 s blocks) the head almost always moves between agent transactions, so in practice we'll `anvil_reset` most of the time, and the "warm cache" gain is small. That's fine. Correctness (simulating against the latest head) comes before speed. Commit 6 measures latency so we know rather than guess.
+
+### Spike findings (commit 1, anvil 1.8.3, 2026-10-07)
+
+Both things the plan depends on work: `anvil_reset({forking: {jsonRpcUrl, blockNumber}})` switches a plain dev node into fork mode (it takes the upstream's chain id, and the block hash at N matches), and `debug_traceTransaction` with `callTracer` returns CALL, CREATE and nested frames. The spike also turned up these, now handled in `simulate/node.py`:
+
+- **Automine is asynchronous.** `eth_sendRawTransaction` returns the hash before the block exists, so an immediate receipt or trace lookup says "not found". The node runs with `--no-mining`, and the simulator mines with `evm_mine`, which returns only once the block is mined. A tx that lands in the pool as *queued* (future nonce) leaves the mined block empty, so a missing receipt must be an error.
+- **Without `--quiet`, anvil logs each request in full,** including the `anvil_reset` that carries the upstream URL. The node runs `--quiet` with all output sent to `/dev/null`.
+- **anvil error text quotes the upstream URL** (e.g. "request to http://host:port/ failed"). `SimulatorError` carries only the method and error code.
+- **`anvil_nodeInfo` returns `forkUrl` in full.** Anyone who can reach the node's port can read the upstream URL and its API key. This adds to the same-host risk in §3. It goes into THREAT_MODEL.md in commit 8.
+- **A failed `anvil_reset` leaves the previous fork in place,** not an empty node. After a failure the fork is dirty until a later reset succeeds.
+- **`evm_revert` does not clear the txpool.** A queued tx survives the revert and could be mined in a later simulation. `anvil_reset` does clear it, and so does `anvil_dropAllTransactions`. Every fork is checked for an empty pool. The simulator (commit 6) must drop the pool before reverting.
+- **`evm_revert` to a used snapshot returns `false`,** not an error. It must be checked.
+- **Dev accounts get 10000 ETH on a fork by default,** which overwrites their real balances. Those addresses are public and used on real chains, so the node runs with `--accounts 0`. That also leaves it with no signing keys.
+- **anvil caches forked state in `~/.foundry/cache/rpc/<chain-name>/<block>/`,** keyed only by chain and block number and shared with every Foundry tool. A local fake chain claiming id 84532 wrote into `base-sepolia/`. The node runs with `HOME` set to a private `0700` temp dir (deleted on stop) and no other environment variables. `--no-storage-caching` can't be used without `--fork-url`.
+- **`--optimism` is `--network optimism` in 1.8.3,** and it works with `anvil_reset`. *Open question for commit 6/7:* turn it on for OP-stack chain ids (Base 8453 / 84532, OP 10 / 11155420), or make it a setting.
+- **Fork state is read by block hash** by default (`--fork-state-by-number` opts out), which pins the state to the block we verified.
 
 ## 2. Effects: what to extract and how
 
@@ -147,7 +163,7 @@ Rules: there's no "simulation disabled" switch. Any exception inside `simulate()
 
 0. **Housekeeping.** Remove the `httpx2` dev dependency from `pyproject.toml` and `uv.lock` (`uv remove --dev httpx2`). Add a `filterwarnings` entry under `[tool.pytest.ini_options]` for the Starlette deprecation warning.
    *Verify:* `uv sync`, then `uv run pytest` passes and that warning no longer shows up, `uv run ruff check .`, and `grep httpx2 uv.lock` finds nothing.
-1. **Simulator node manager** (`simulate/node.py`, settings `ANVIL_PATH`, `SIMULATION_TIMEOUT_SECONDS`, `.env.example`). Spawn Anvil, wait until ready, `anvil_reset` into fork mode over RPC, startup checks (chain id, block hash, callTracer probe), clean shutdown. Includes a short **spike** confirming Anvil 1.8.3 supports fork-mode reset over RPC and callTracer. If it doesn't, we adjust before building more.
+1. **Simulator node manager** (`simulate/node.py`, settings `ANVIL_PATH`, `SIMULATION_TIMEOUT_SECONDS`, `.env.example`). **Done.** Spawn Anvil, wait until ready, `anvil_reset` into fork mode over RPC, startup checks (chain id, block hash, callTracer probe), clean shutdown. Includes a short **spike** confirming Anvil 1.8.3 supports fork-mode reset over RPC and callTracer. If it doesn't, we adjust before building more.
    *Verify:* `uv run pytest -m anvil tests/integration/test_simulator_node.py`. An "upstream" Anvil plus our fork Anvil: chain ids match, a wrong chain id refuses to start, and `ps` shows no upstream URL.
 2. **Effects models** in `models.py`.
    *Verify:* unit tests for frozen behavior, signed `BigInt` deltas serializing as strings, and round-trip JSON.

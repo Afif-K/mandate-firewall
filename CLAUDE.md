@@ -84,14 +84,17 @@ Env & deps: `uv sync`, then `uv run pytest`, `uv run ruff check .`.
 
 ## Roadmap
 - [x] M1: RPC proxy that intercepts `eth_sendRawTransaction`, decodes, logs, forwards
-- [ ] M2: Anvil simulation producing structured effects
+- [x] M2: Anvil simulation producing structured effects (plan and decisions: docs/m2-plan.md)
 - [ ] M3: Mandate capture: user instruction -> locked, structured mandate
 - [ ] M4: Verifier (deterministic matcher + isolated LLM), plain-English verdicts, human escalation
 - [ ] M5: Real agent integration; demo an injection that rule-based guardrails miss
+- [ ] M6: Pre-sign / typed-data inspection: check EIP-712 signatures before the agent
+      signs them (Permit2 and EIP-2612 permits at minimum). Off-chain signatures never
+      reach eth_sendRawTransaction, so the proxy can't see them (see THREAT_MODEL.md)
 - [ ] v0.1 release: README, demo GIF, quickstart, threat model
-- [ ] M6: Benchmark (build on CrAIBench/AgentDojo scenarios), results, open dataset, writeup
+- [ ] M7: Benchmark (build on CrAIBench/AgentDojo scenarios), results, open dataset, writeup
 
-**Current milestone: M2**
+**Current milestone: M3**
 
 ## How to work with me
 - I'm a CS/AI engineering student building this to learn deeply and to ship

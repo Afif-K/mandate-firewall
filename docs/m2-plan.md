@@ -1,6 +1,6 @@
 # M2 plan: simulation that produces structured effects
 
-Status: **approved 2026-10-06**. Commits 0–7 done. Next step: commit 8 (docs).
+Status: **approved 2026-10-06**. **M2 complete** (commits 0–8, 2026-10-07).
 
 ## Decisions (agreed 2026-10-06)
 
@@ -196,7 +196,7 @@ Rules: there's no "simulation disabled" switch. Any exception inside `simulate()
    - *Sequential nonces, measured:* nonce n+1 simulated before n is mined upstream is blocked ("nonce may be too high"). Against a local anvil, the batch case goes either way, depending on whether anvil mined n within a few ms. The integration test accepts both outcomes and asserts the invariants: blocked txs never reach the node, and forwarded ones are a prefix. M4's pending state should make all of them pass.
    - The simulation node is a child process of the proxy. A clean shutdown stops it. If the proxy is SIGKILLed, the anvil child is left running (orphaned) until killed by hand. That's acceptable for now; the Docker image (v0.1) should run both under one init.
    *Verify:* existing M1 tests still pass. New integration test: proxy → real tx is forwarded with effects in the audit line, a reverting tx is blocked and never mined upstream, and with the simulator killed, a tx is blocked.
-8. **Docs.** Rewrite THREAT_MODEL.md for M2 (all of §5, same-host tampering, off-chain signatures, multi-tx flows), README quickstart (Anvil now required). In CLAUDE.md, mark M2 done and add the pre-sign / typed-data inspection milestone (Permit2 and EIP-2612 at minimum) before v0.1.
+8. **Docs.** Rewrite THREAT_MODEL.md for M2 (all of §5, same-host tampering, off-chain signatures, multi-tx flows), README quickstart (Anvil now required). In CLAUDE.md, mark M2 done and add the pre-sign / typed-data inspection milestone (Permit2 and EIP-2612 at minimum) before v0.1. **Done.** The new milestone is M6 in CLAUDE.md, and the benchmark became M7. `scripts/demo_m2.sh` (its own commit) is linked from the README.
    *Verify:* read-through. `uv run ruff check .` and the full `uv run pytest`.
 
 **Deferred (after M2):** differential timestamp/block simulation plus realistic coinbase (`TimeBomb` / `SimDetector` fixtures from commit 5 are ready for it), ERC-1155 transfer decoding, and Permit2 event decoding.

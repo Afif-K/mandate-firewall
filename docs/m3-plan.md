@@ -338,6 +338,15 @@ Where M9 sits (before or after v0.1) is open (confirmed 2026-10-09: stays M9 for
    *Verify:* read-through.
 1. **Mandate models and canonical hash** (`mandate/models.py`, `mandate/canonical.py`).
    *Verify:* unit tests: frozen; discriminated union; `Budget.max` required and below 2**256−1; non-null `period` rejected; `Ratio.denominator > 0`; one-shot expiry within 24 h; no fields missing in canonical JSON; a known-answer hash (fixed mandate → fixed hex); the same hash regardless of input key order.
+   **Done.** How it differs from the sketch in §1 and §3:
+   - *Integers in canonical JSON:* uint256 values (budgets, ratios) are decimal strings, as planned. Small bounded integers (`chain_id`, `decimals`, `max_transactions`, `schema_version`) stay JSON numbers, capped below 2**53 so every parser reads the same value. With ASCII keys, no floats and integers below 2**53, Python's `json.dumps(sort_keys=True, separators=(",", ":"), ensure_ascii=False)` gives the same bytes as RFC 8785.
+   - *Every field is required*, with no defaults (including `period: null`), so "missing" and "null" can't both spell one mandate. `extra="forbid"` everywhere.
+   - *Strict values:* `chain_id`, `decimals`, `max_transactions` and `schema_version` reject `True`, `1.0` and `"1"` (pydantic's plain `int` and `Literal[1]` accept the first two). Budgets and ratio terms must be > 0 and < 2**256−1, since that maximum reads as "unlimited" to contracts.
+   - *Times* have one spelling: `YYYY-MM-DDTHH:MM:SSZ`, whole seconds. Unix numbers, offsets and fractions are rejected in strings. Aware Python datetimes are converted to UTC; naive ones are rejected.
+   - *Extra cross-field rules:* every asset is on the mandate's chain; a swap sells and buys different assets; venues are unique and never the principal; two intents over the same asset and counterparty (same transfer recipient, or same sell/buy pair) are rejected, because M4 couldn't tell which budget a transaction draws on.
+   - *`parse_canonical(bytes)`* (for the store in commit 3) accepts only the exact canonical bytes: it parses, re-encodes and compares. That also rejects duplicate keys, a BOM, trailing newlines and `\u` escapes. Errors name the problem, never the field values.
+   - Pydantic already refuses strings with lone surrogates (they can't be UTF-8), so no extra check was needed.
+   - The known-answer id in the tests was computed with `shasum -a 256` over the hand-written JSON, not with our own code.
 2. **Registry** (`mandate/registry.py`, `registry/84532.json`).
    *Verify:* unit tests: duplicate symbols, bad checksums and unknown chains rejected. Addresses checked by hand against issuer docs, sources noted in the file.
 3. **Mandate store** (SQLite: append-only content, status events, counters keyed by `(mandate_id, period_start)`; `0600`/`0700`; one active mandate per principal; hash check on load).

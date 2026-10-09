@@ -315,7 +315,7 @@ There's no setting that turns the gate off.
 
 ---
 
-## 8. Roadmap changes (applied to CLAUDE.md in commit 8)
+## 8. Roadmap changes (applied to CLAUDE.md 2026-10-09, in its own commit after commit 0)
 
 Renumbered, per Decisions 2, 3 and 8:
 
@@ -328,7 +328,7 @@ Renumbered, per Decisions 2, 3 and 8:
 - M8 (was M7): benchmark
 - **M9 (new): user-wallet EIP-712 mandate signing.** The user's own wallet signs the canonical mandate. The firewall verifies the signer against a configured owner address
 
-Where M9 sits (before or after v0.1) is open. It's listed last because OS permissions cover the single-host setup.
+Where M9 sits (before or after v0.1) is open (confirmed 2026-10-09: stays M9 for now). It's listed last because OS permissions cover the single-host setup.
 
 ---
 
@@ -350,7 +350,7 @@ Where M9 sits (before or after v0.1) is open. It's listed last because OS permis
    *Verify:* tests drive stdin with the fake extractor; confirmation without a terminal fails; one manual run against the real API on your machine.
 7. **Proxy binding and gate** (store opened at startup, refuse to start without it, the gate, `mandate_id` in `AuditRecord`, counter written with the audit record, test that agents can't reach `mandate_*`/`firewall_*`).
    *Verify:* existing M1/M2 tests pass after fixtures create a mandate. New integration tests: no mandate → blocked and never mined upstream; expired → blocked; cap reached → blocked; with a mandate → forwarded, with `mandate_id` in the audit line; a tampered store row → blocked.
-8. **Docs and demo:** THREAT_MODEL.md (§7), README (capture quickstart, privacy note), CLAUDE.md (M3 done, roadmap from §8), `scripts/demo_m3.sh`.
+8. **Docs and demo:** THREAT_MODEL.md (§7), README (capture quickstart, privacy note), CLAUDE.md (mark M3 done; the §8 roadmap is already in), `scripts/demo_m3.sh`.
    *Verify:* read-through; full `uv run pytest`; `uv run ruff check .`.
 
 Each commit: `uv run ruff check .` plus `uv run pytest` (with `-m anvil` for integration tests), no Co-Authored-By trailer.

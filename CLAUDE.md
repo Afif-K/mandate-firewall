@@ -86,13 +86,22 @@ Env & deps: `uv sync`, then `uv run pytest`, `uv run ruff check .`.
 - [x] M1: RPC proxy that intercepts `eth_sendRawTransaction`, decodes, logs, forwards
 - [x] M2: Anvil simulation producing structured effects (plan and decisions: docs/m2-plan.md)
 - [ ] M3: Mandate capture: user instruction -> locked, structured mandate
-- [ ] M4: Verifier (deterministic matcher + isolated LLM), plain-English verdicts, human escalation
-- [ ] M5: Real agent integration; demo an injection that rule-based guardrails miss
-- [ ] M6: Pre-sign / typed-data inspection: check EIP-712 signatures before the agent
+      (plan and decisions: docs/m3-plan.md)
+- [ ] M4: Verifier: the deterministic matcher decides; the LLM only writes the
+      plain-English explanation, never allows or blocks. Human escalation for anomalies
+- [ ] M5: Standing mandates: per-period budgets and transaction caps, expiries beyond
+      24 hours, renewal and revocation. Human input once per mandate, never per
+      transaction; transaction-time decisions are fully automated
+- [ ] M6: Real agent integration; demo an injection that rule-based guardrails miss.
+      Capture must sit in front of the agent: the user's instruction reaches the
+      firewall before the agent reads any untrusted content
+- [ ] M7: Pre-sign / typed-data inspection: check EIP-712 signatures before the agent
       signs them (Permit2 and EIP-2612 permits at minimum). Off-chain signatures never
       reach eth_sendRawTransaction, so the proxy can't see them (see THREAT_MODEL.md)
 - [ ] v0.1 release: README, demo GIF, quickstart, threat model
-- [ ] M7: Benchmark (build on CrAIBench/AgentDojo scenarios), results, open dataset, writeup
+- [ ] M8: Benchmark (build on CrAIBench/AgentDojo scenarios), results, open dataset, writeup
+- [ ] M9: User-wallet EIP-712 mandate signing: the user's own wallet signs the canonical
+      mandate and the firewall checks the signer. (Placement before/after v0.1 is open.)
 
 **Current milestone: M3**
 

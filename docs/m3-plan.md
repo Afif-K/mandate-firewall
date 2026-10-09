@@ -1,0 +1,365 @@
+# M3 plan: mandate capture
+
+Status: **approved 2026-10-09**. Commit 0 (this document) done.
+
+## Decisions (agreed 2026-10-09)
+
+1. **Mandates are effects-shaped budgets**, not scripts of calls. M3 supports two intents, `transfer` and `swap`. The schema is versioned (`schema_version`), and everything else is refused as unsupported. See §1.
+2. **Option B for the trust boundary.** The user gives the instruction to the firewall directly, through the capture CLI. The agent RPC has **no** mandate methods: `methods.py` stays default-deny and a test asserts that `mandate_*` and `firewall_*` names are rejected. In CLAUDE.md, the real-agent-integration milestone gets an explicit requirement: in real integrations, capture sits *in front of* the agent, so the instruction reaches the firewall before the agent reads anything. See §3.
+3. **Signing is deferred.** In M3 the boundary is OS permissions: the agent runs as a different user or container (already required since M1/M2) and can't reach the mandate store. A roadmap item is added for **user-wallet EIP-712 mandate signing**. See §3.
+4. **The "no mandate → block" gate is on in M3** (commit 7). A transaction from a sender with no valid active mandate is blocked with `-32003`. See §4.
+5. **The Anthropic SDK is used**, after re-checking `httpx2` provenance (the SDK depends on it; M2 removed it as a direct dev dependency). The result is recorded in commit 5. **Only the capture code may import the SDK. The proxy process must never import it**, and a test enforces this. See §5.
+6. **Defaults:** expiry 30 minutes, hard cap 24 hours for one-shot mandates, `max_transactions` 3.
+7. **Planned M4 direction** (agreed in principle): the deterministic matcher makes the decision. The LLM in M4 only writes explanations. It never allows or blocks anything. See "Roadmap pushback", item 3.
+8. **Standing mandates are a core use case, not a footnote.** M3 stays one-shot, but the schema reserves the slots standing mandates need (a `kind` field, per-period budgets, expiries beyond 24 hours), so they can be added later without a schema rewrite. A **standing-mandates milestone** goes right after M4, before real agent integration, and the roadmap is renumbered. The reasoning: **human input happens once per mandate, never per transaction, and transaction-time decisions are fully automated.** See §1, "Designed for standing mandates", and §8.
+
+## Context
+
+M1 built the choke point and M2 tells us what each transaction does (`Effects`). M3 adds the other half: a **locked, structured statement of what the user asked for**, which reaches the firewall through a channel the agent can't write to. M4 compares `Effects` against it.
+
+M3 makes no intent decisions. It adds one new reason to block: **no valid mandate covers this sender.** It does not check whether the transaction matches the mandate. That is M4, and THREAT_MODEL.md will say so plainly.
+
+What exists today that M3 reuses:
+- `Settings` (`config.py`) reads configuration from the environment. Secrets never come from command-line flags, the same rule as `UPSTREAM_RPC_URL`.
+- The strict types in `models.py` (`Address`, `Uint256`, `Hash32`), so a mandate can't hold a non-checksummed address or a float amount.
+- `AuditRecord` (`audit.py`) gains `mandate_id`.
+- `Proxy._send_raw_transaction` (`proxy/app.py`) is where the gate goes, after `_check(tx)` and before simulation.
+- The fail-closed and "refuse to start" patterns used for the audit log and the simulator.
+
+---
+
+## 1. The mandate schema
+
+### Constrain effects, not calldata
+
+There are two ways to describe what the user allowed:
+
+- **Calldata-shaped:** "the agent may call `swapExactTokensForTokens` on router R with these arguments." This is brittle. The same intent can be carried out through `approve` + `swap`, Permit2, a multicall, or another router function. It also trusts decoded calldata, which M1 already labels as a claim (`models.py`, `DecodedCall`).
+- **Effects-shaped:** "when this is over, the account may have lost **at most** 100 USDC and must have gained **at least** 0.03 WETH. Approvals may go **only** to router R and be **at most** 100 USDC. Nothing else may leave the account." This is what M2 measures, so M4 compares like with like.
+
+We use the effects-shaped form.
+
+### A mandate is a budget, not a script
+
+For "swap 100 USDC for WETH on Uniswap", an agent might send one transaction (Permit2 or a multicall) or two (`approve`, then `swap`). An ordered list of steps would force us to guess which. Instead:
+
+- **Intents** are outcomes (`transfer`, `swap`). Each has cumulative bounds that are spent across the transactions charged to the mandate.
+- **Enablers** (token approvals) aren't intents. An approval is allowed only if it serves an active intent: the spender is one of that intent's venues, the token is its sell asset, and the amount is at most the remaining sell budget. **Unlimited approvals are never allowed.** M3 encodes the rule in the schema. M4 enforces it against effects.
+- **Default deny:** any outflow from the principal that no intent covers is off-mandate. That includes ETH beyond gas, token transfers, approvals, `ApprovalForAll`, and unrecognized logs. Inflows are fine.
+
+So approve-then-swap is one mandate, and both transactions draw on the same budget. Tracking what is spent (the ledger) is M4's job, because spending depends on verification. M3 defines the fields and the storage the ledger needs.
+
+### Proposed model (`mandate/models.py`, frozen, strict types from `models.py`)
+
+```python
+class MandateKind(StrEnum):  ONE_SHOT = "one_shot"   # STANDING added by the standing-mandates milestone
+
+class Period(BaseModel):     # reserved; M3 rejects any non-null period (see below)
+    unit: Literal["day", "week", "month"]
+    anchor: datetime          # windows start here and repeat every `unit`
+
+class AssetRef(BaseModel):   # from the trusted registry, never from on-chain names or symbols
+    chain_id: int
+    address: Address | None   # None = native ETH
+    decimals: int             # registry value, display only
+
+class Budget(BaseModel):     # cumulative cap on what may leave the principal
+    max: Uint256              # base units; required; < 2**256-1 (no "unlimited")
+    period: Period | None     # None = over the mandate's whole life. M3: must be None
+
+class Ratio(BaseModel):      # min_buy_per_sell = numerator / denominator, in base units
+    numerator: Uint256
+    denominator: Uint256      # > 0
+
+class TransferIntent(BaseModel):
+    kind: Literal["transfer"]
+    asset: AssetRef
+    budget: Budget
+    recipient: Address        # exact
+
+class SwapIntent(BaseModel):
+    kind: Literal["swap"]
+    sell: AssetRef
+    sell_budget: Budget
+    buy: AssetRef
+    min_buy_per_sell: Ratio | None   # None = user gave no minimum (flagged at confirmation)
+    venues: tuple[Address, ...]      # routers from the registry; also the only allowed spenders
+    # implicit, checked by M4: the bought asset must arrive at the principal
+
+Intent = Annotated[TransferIntent | SwapIntent, Field(discriminator="kind")]
+
+class Limits(BaseModel):
+    max_transactions: int     # default 3
+    period: Period | None     # M3: must be None (the cap is over the mandate's whole life)
+
+class Mandate(BaseModel):
+    schema_version: Literal[1]
+    kind: MandateKind
+    chain_id: int
+    principal: Address        # the agent account this mandate governs
+    intents: tuple[Intent, ...]   # 1..N
+    limits: Limits
+    created_at: datetime
+    expires_at: datetime      # one_shot: at most 24 h after created_at
+    instruction: str          # the user's text (trusted), for the audit log and M4's diff
+    nonce: Hash32             # random, so two identical instructions get different ids
+```
+
+Why the swap minimum is a ratio and not an absolute amount: "at least 0.03 WETH for 100 USDC" is the same as "at least 0.0003 WETH per USDC". For a one-shot swap the two are equivalent. For a standing "buy WETH with 50 USDC every week" only the ratio makes sense, and it also handles partial fills. M4 checks it with integers, no division: `bought × denominator ≥ sold × numerator`.
+
+### Designed for standing mandates (Decision 8)
+
+Autonomy is the point of the project: the user says once "pay rent of 1,000 USDC to 0xLandlord on the 1st of every month" or "DCA 50 USDC into WETH weekly", and the agent acts for months. The principle:
+
+> **Human input happens once per mandate, never per transaction. Transaction-time decisions are fully automated.**
+
+That's why the user's attention goes to the moment of capture, where a human is present and reads a deterministic summary. At transaction time no human is there, and nothing in the decision path may need one. Escalation remains for anomalies. It is never the normal way to approve a transaction. It's also why the LLM belongs at capture, not at verification (Decision 7).
+
+What the M3 schema already contains so standing mandates fit without a rewrite:
+- `kind`. Standing mandates add the `STANDING` value. The field itself doesn't change.
+- `Budget.period` and `Limits.period`. A standing mandate sets them: "at most 1,000 USDC per month, at most 2 transactions per month". The ledger's storage is keyed by `(mandate_id, period_start)` from M3 on (§3), so per-period spending needs no new tables.
+- `expires_at` is just a timestamp. The 24-hour cap is a validator rule tied to `kind = one_shot`, not a type limit. Standing mandates get their own cap.
+- `Ratio` for swap minimums (above).
+
+Why the fields exist now and aren't added later: the mandate id is a hash of the canonical JSON (§3). If a field is added later with a default, either old mandates hash differently or "field missing" and "field = null" have to mean the same thing, which is a classic source of parser differentials. With every field present from version 1 (`period: null`), the standing milestone only adds enum values and relaxes validators.
+
+What stays open for the standing milestone: whether `Period` keeps its exact shape (fixed windows from an anchor vs. rolling windows), calendar months and time zones, how a one-shot and a standing mandate coexist for one principal (M3 allows one active mandate per principal), renewal and revocation UX, and caps on lifetime and total exposure. **M3 rejects any non-null `period`, so no stored M3 mandate depends on the reserved shape.** If the standing milestone changes `Period`, nothing stored breaks.
+
+### Mandate ↔ Effects (the contract with M4)
+
+| Mandate field | Compared against in `Effects` |
+|---|---|
+| `chain_id`, `principal` | `effects.chain_id`, `effects.sender` |
+| transfer `asset`, `budget.max`, `recipient` | `token_transfers` from the principal, or `native_balance_changes` for ETH (gas excluded using `gas_cost`) |
+| swap `sell`, `sell_budget.max` | the principal's net outflow of `sell` (transfers out minus in) |
+| swap `min_buy_per_sell` | the principal's net inflow of `buy` vs. its net outflow of `sell` |
+| swap `venues` | `token_approvals[].spender`, and `calls[].target` at depth 1 |
+| "nothing else leaves" | every other negative delta, approval, `operator_approvals` entry and `unrecognized_logs` entry → off-mandate or escalate |
+| (not a mandate field) | `token_state_checks[].consistent == False` → escalate, whatever the mandate says |
+
+Worked example. The user says "swap 100 USDC for WETH on Uniswap". The injected transaction is a real Uniswap swap of 100 USDC with `recipient = attacker`. It passes a spend limit and a router allowlist. Its effects: the principal loses 100 USDC, gains 0 WETH, and the WETH `Transfer` goes to the attacker. Inflow of `buy` to the principal is 0, below any minimum and below the implicit "bought asset arrives at the principal" rule, so it's off-mandate.
+
+### Why not AP2's format
+
+Google's Agent Payments Protocol (AP2) chains signed mandates. An *IntentMandate* is signed by the user (natural-language description, merchants, SKUs, refundability, intent expiry), a *CartMandate* is signed by the merchant (exact items and price), and a *PaymentMandate* goes to the payment network. Each is a JWS token signed with ES256.
+
+We don't adopt the format. AP2's intent constraints are commerce-shaped (merchants, SKUs, refunds) and partly natural language, and they're largely enforced by a merchant checking a cart. Ours must be fully structured and machine-checkable against EVM effects with nobody in the loop. We do take its ideas: intent kept separate from execution (mandate vs. effects, like IntentMandate vs. CartMandate), mandatory expiry, a user-attested object (EIP-712 signing later, Decision 3), and a human present at creation. An `export --ap2` adapter is possible later. Not M3.
+
+---
+
+## 2. Capture: instruction → mandate
+
+### The LLM is a parser whose output nobody trusts
+
+The security control is **the user confirming a summary rendered deterministically from the compiled mandate**. The LLM only saves typing.
+
+```
+user text ──► LLM extractor ──► Draft (strings only) ──► compiler (pure Python) ──► Mandate ──► rendered summary ──► user types "yes"
+                 ▲                                  │ ambiguity / grounding failure
+                 └──────── clarifying question ◄────┘ (the answer is appended as trusted user text)
+```
+
+**Step 1, extraction (LLM).** One call with structured outputs (the API constrains the response to a JSON schema). The response is a **Draft**, deliberately weaker than a Mandate. Every value is a string copied from the instruction:
+
+```python
+class DraftIntent(BaseModel):
+    kind: Literal["transfer", "swap"]
+    asset_symbol: str; amount_text: str
+    recipient_text: str | None
+    buy_symbol: str | None; min_out_text: str | None; venue_name: str | None
+
+class Draft(BaseModel):
+    intents: list[DraftIntent]
+    ambiguities: list[str]     # anything unclear, as questions for the user
+    unsupported: str | None    # e.g. "bridging", "standing schedule"
+```
+
+The LLM never produces base units, token addresses or chain ids, and never converts units. The prompt says: copy, don't compute; if anything is unclear, list it under `ambiguities`. The Draft is validated again with Pydantic after the API's own schema check.
+
+**Step 2, compilation (deterministic, pure, the most heavily tested part).** Every value must be grounded:
+- **Token symbols** resolve only through the trusted registry (§2b). An unknown symbol, or one matching several entries, means we ask.
+- **Addresses** must be valid hex with a correct checksum (or all-lowercase) **and appear verbatim in the user's text**, or come from the operator's address book ("Bob" → 0x…). An address the user never typed is a hard error. This is the "no invented fields" rule.
+- **Amounts:** `amount_text` must appear in the user's text. It's parsed with `Decimal`, never `float`, converted with registry decimals, and refused if it has more decimal places than the token supports.
+- **Venues** resolve through the registry ("Uniswap" → this chain's router addresses). A swap with no venue means we ask.
+- **Expiry** comes from config (default 30 min, cap 24 h) and is shown at confirmation. **Principal** comes from config (`MANDATE_PRINCIPALS`).
+- Non-empty `ambiguities` or a set `unsupported` means no mandate: we ask, or refuse with the reason.
+
+**Step 3, confirmation.** A template renders the compiled mandate, never LLM prose:
+
+```
+Mandate for 0xAgent… on Base Sepolia (84532), expires 14:32 UTC (in 30 min)
+  1. SWAP  sell at most 100 USDC (0x036C…CF7e)
+           for WETH (0x4200…0006), minimum: NONE ⚠ you could receive far less
+           only via: Uniswap Universal Router (0x…)
+  At most 3 transactions. Nothing else may leave this account.
+Type "yes" to lock this mandate:
+```
+
+### Ambiguity: ask, never guess
+
+| Instruction | Result |
+|---|---|
+| "send 50 USDC to 0xB0b…" | compiles |
+| "send some USDC to 0xB0b…" | ask: how much? (no grounded amount) |
+| "send 50 USDC to Bob" | address book hit → compiles; no hit → ask for the address |
+| "send 50 USDC" | ask: to whom? |
+| "swap my USDC for ETH" | ask: how much, and on which venue? |
+| "buy the token from that tweet" | ambiguous and unsupported. Also a red flag: the instruction leans on untrusted content |
+| "DCA 50 USDC into WETH every week" | unsupported in M3 ("standing mandates are not supported yet") |
+
+Answers to clarifying questions are appended to the trusted instruction and extraction runs again. After 3 rounds the CLI gives up and points to the structured form.
+
+### Structured path, no LLM
+
+`mandate-firewall mandate new --swap 100 USDC --for WETH --via uniswap` builds the same Draft and goes through the **same compiler** and confirmation. Tests don't need an LLM, capture still works when the LLM is down, and protecting an agent in five minutes doesn't need an API key. The SDK is an optional extra (`mandate-firewall[llm]`), so the structured path installs without it.
+
+### 2b. Trusted token and venue registry
+
+A data file per chain (`registry/<chain_id>.json`, shipped for Base Sepolia, with an operator override via `REGISTRY_PATH`): symbol → address and decimals, venue name → router addresses. Loading is strict: duplicate symbols, bad checksums or an unknown chain id fail at startup. M4 reuses the registry to show canonical names instead of attacker-chosen token names. Every address is checked against the issuer's own documentation in its commit (Circle for USDC, Uniswap's deployment list for routers), and the source is noted in the file. None are written from memory.
+
+---
+
+## 3. The trust boundary
+
+### The threat
+
+Anything the agent can write, an attacker who injected the agent can write. So **no path from the agent's side may create, change, extend or select a mandate's contents.**
+
+### Where the instruction enters
+
+| Option | How | Problem |
+|---|---|---|
+| A. Agent forwards the instruction | `firewall_createMandate` over RPC | The agent may already have read poisoned content and can rewrite the instruction ("…to 0xAttacker"). The only defense left is the user noticing at confirmation, which fatigue makes weak |
+| **B. User → firewall directly (chosen)** | Capture CLI on the firewall's side; the user then gives the agent its task | One extra step for the user in M3. Real integrations must put capture in front of the agent (real-agent-integration milestone) |
+| C. Agent proposes, user confirms remotely | A plus a phone/Telegram confirmation | Same core weakness as A, plus a remote channel to secure |
+
+B is the CaMeL pattern: the trusted instruction is captured before the planner sees untrusted data, and the mandate's content never passes through the agent.
+
+### How mandates reach the proxy
+
+- The capture CLI runs as the **firewall's OS user** and writes to a SQLite store (`MANDATE_DB_PATH`), file mode `0600` in a `0700` directory.
+- The proxy opens the store for mandate content **read-only**. Its only writes are transaction counters (§4).
+- The agent already has to run as a different user or container (M1/M2: against proxy bypass and anvil tampering), so it can't reach the store. **File permissions are the authentication.** The proxy warns at startup if the store or its directory is accessible to group or others, as it does for the audit log.
+- Confirmation requires an interactive terminal (`isatty` on stdin). That's defense in depth against a scripted "yes". It isn't a boundary: whoever can run commands as the firewall user can create mandates.
+
+### Locking
+
+- **Content hash.** `mandate_id = sha256(canonical JSON)`. Canonical means: keys sorted, no whitespace, every field present (nulls included), integers as decimal strings (as `Uint256` already serializes), datetimes as UTC ISO 8601 with second precision and a `Z`, UTF-8. The id is stored with the content and recomputed on every load. A mismatch counts as no mandate, so the transaction is blocked. Every audit record carries the id, so the log shows exactly which confirmed mandate a transaction was charged to.
+- **Immutable.** Content rows are append-only. Status changes (`revoked`, `exhausted`; `expired` is derived from the clock) are rows in a separate event table. "Editing" means revoking and creating a new mandate. No code path updates a content row, and a test checks that.
+- **Expiry** is required: default 30 min, cap 24 h for one-shot mandates. It's checked against the proxy's clock when each transaction arrives.
+- **Use-limited, not single-use.** Single-use per transaction would break approve-then-swap. A mandate covers at most `max_transactions` transactions, and its intents' budgets can't be exceeded in total. Once used up it's `exhausted` for good. M3 enforces the transaction cap. Budget accounting is M4. Counters are keyed by `(mandate_id, period_start)`, with `period_start` = `created_at` while `period` is null, so per-period counting later needs no migration.
+
+### Signing (deferred, Decision 3)
+
+A key on the same host as the store adds almost nothing: anyone who can write the store can usually read the key. The version that adds real protection is the **user's own wallet signing the mandate as EIP-712 typed data**, checked against a configured owner address. That enables remote creation (from a phone) and gives audit-grade proof that the user approved the mandate. The canonical encoding above is designed so that signature can be added later without a schema change. It's a separate roadmap item (§8).
+
+---
+
+## 4. Binding: which mandate covers which transaction
+
+- **Key: `(chain_id, sender)`.** The sender is recovered from the signature (M1), so the agent can't fake it.
+- **At most one active mandate per principal** in M3. Creating a second one fails unless `--replace` is given, which revokes the first. With several active mandates it would be ambiguous which budget to charge, and an agent-supplied "use mandate X" tag would let an injected agent pick the broadest one. Later, M4 can check a transaction against each candidate and charge only one it fully fits. The standing-mandates milestone revisits this for one-shot and standing mandates side by side.
+- **The gate (commit 7, Decision 4).** In `_send_raw_transaction`, after `_check(tx)` and before simulation: look up the active mandate for `(tx.chain_id, tx.sender)`. If there's none, it's expired, revoked or exhausted, its hash doesn't match, or `max_transactions` is reached → block `-32003` with the reason. Otherwise simulate as in M2. The counter is incremented and fsynced together with the audit write that comes before forwarding. If that write fails, the transaction is blocked. Blocked transactions don't count against the cap.
+
+**Honest caveat.** Until M4, a transaction from a principal that *has* an active mandate is forwarded without comparing its effects to the mandate. M3 narrows the window (a confirmed mandate must exist, unexpired, under its transaction cap). It doesn't close it. THREAT_MODEL.md says this in bold.
+
+---
+
+## 5. LLM provider and API key
+
+- **Provider:** Anthropic, behind a small `MandateExtractor` protocol (`extract(text) -> Draft`). Supporting another provider means one more class. The model is configurable (`LLM_MODEL`), defaulting to `claude-opus-5-5`. Capture is a few short calls per mandate, so cost isn't a concern. Structured outputs (`output_config.format`) are generally available.
+- **`httpx2` (Decision 5).** `anthropic` 1.x is built on `httpx2`. In M2 we removed it as an unneeded direct dev dependency and noted that its PyPI upload had no provenance attestation (M2 plan, pushback 4). Commit 5 re-checks: PyPI's integrity API for the version the lock resolves, the project's repository link, and the SDK's own attestation. The commit message records the result. If the check fails, we stop and decide again (likely calling the Messages API with our existing `httpx`). Once `httpx2` is installed, Starlette's test client will prefer it, so the `filterwarnings` entry from M2 commit 0 is re-checked and removed if it no longer matches anything.
+- **Only capture imports the SDK (Decision 5).** Layout: `mandate/` (models, canonical encoding, registry, store, compiler) never imports the SDK and is what the proxy uses. `capture/` (extractor, CLI flow) may import it. `cli.py` imports `capture` lazily inside the `mandate` subcommand, so `serve` never loads it. Enforced two ways: (1) a test runs `mandate_firewall.cli` `serve` setup in a subprocess (app created, lifespan not started) and asserts `anthropic` and `httpx2` are not in `sys.modules`; (2) a test walks the AST of every module outside `capture/` and fails on any `anthropic` import. The proxy process never holds the key either: it lives in a separate `CaptureSettings` that only `capture/` reads.
+- **Keeping the key secret:**
+  - `LLM_API_KEY: SecretStr`. Its `repr` and `str` show `**********`. It's read from the environment or `.env`, **never from a flag** (command lines are visible in `ps`).
+  - It's passed explicitly to the client, so the SDK doesn't silently fall back to another credential (`ANTHROPIC_API_KEY`, `ant auth` profiles).
+  - SDK exceptions are caught by type (auth, rate limit, status, connection, timeout) and re-raised as `ExtractionError(kind, status_code, request_id)`. The SDK's message text is never shown.
+  - Capture refuses to run if `ANTHROPIC_LOG` is set (SDK debug logging can dump request details), and our logging config never puts the `anthropic` or `httpx2` loggers at DEBUG.
+  - Test: the key is set to a sentinel string; auth, network and malformed-response failures are forced; the sentinel must not appear in caplog, stderr, the store or the audit log.
+- **Privacy (README):** the instruction text, including amounts and addresses, is sent to the LLM provider. The structured path avoids that.
+
+---
+
+## 6. Failure handling (fail closed)
+
+| Failure | Behavior |
+|---|---|
+| LLM unreachable, refuses, times out, or returns invalid output | No mandate. Tell the user and offer the structured path. Never fall back to a partial draft |
+| Draft has ambiguities, ungrounded values, unknown symbols or an unsupported action | Ask (at most 3 rounds), then refuse |
+| User doesn't type exactly `yes`, or stdin isn't a terminal | Nothing is stored |
+| Store missing or unreadable at proxy startup | **Refuse to start**, like the audit log |
+| Store or its directory accessible to group/others | Warn at startup |
+| No active mandate, or it's expired, revoked, exhausted or for another chain | Block `-32003`, reason in the audit record |
+| Hash mismatch on load | Block, log an error ("mandate store integrity failure") |
+| Store read error while handling a transaction | Block |
+| Counter write fails | Block (same rule as a failed audit write) |
+| Clock wrong | Expiry uses the proxy's wall clock. Documented, not solved |
+
+There's no setting that turns the gate off.
+
+---
+
+## 7. What M3 does NOT solve (goes into THREAT_MODEL.md, commit 8)
+
+1. **Effects aren't compared with the mandate yet (M4).** While a mandate is active, any transaction from that principal that simulates cleanly is forwarded, up to `max_transactions`, until it expires.
+2. **The user can confirm a bad mandate:** fatigue, a misread address. Canonical names and the ⚠ for a missing minimum help. They don't fix it.
+3. **A poisoned instruction.** If the user pastes an address copied from a scam page, the mandate faithfully authorizes the scam. Mandates capture intent; they don't judge it.
+4. **Same-host compromise.** Anyone who runs as the firewall user can create mandates. There's no signing in M3.
+5. **Authorized but badly executed.** An injected agent can still do what was authorized, badly (a bad price). Swap minimums and M4 cover part of this.
+6. **Swaps without a stated minimum** are flagged at confirmation, not bounded.
+7. **Standing mandates aren't supported yet**, only one-shot (planned milestone right after M4).
+8. **Off-chain signatures** (Permit2, EIP-2612) remain invisible until the pre-sign milestone. A mandate doesn't help against them.
+9. **The registry is trusted.** A wrong entry means a wrong mandate. It's curated by the operator and not verified on chain.
+10. **Wall-clock expiry.** A transaction forwarded just before expiry may be mined after it.
+11. **The instruction goes to the LLM provider** when the LLM path is used.
+
+---
+
+## 8. Roadmap changes (applied to CLAUDE.md in commit 8)
+
+Renumbered, per Decisions 2, 3 and 8:
+
+- M3: mandate capture (this plan)
+- M4: verifier. The deterministic matcher decides. The LLM only explains (Decision 7). Plain-English verdicts, human escalation for anomalies
+- **M5 (new): standing mandates.** Per-period budgets and transaction caps, expiries beyond 24 hours, renewal and revocation, one-shot and standing mandates side by side. Human input once per mandate, decisions per transaction fully automated
+- M6 (was M5): real agent integration. **Capture must sit in front of the agent**: the user's instruction reaches the firewall before the agent reads any untrusted content. Demo an injection that rule-based guardrails miss
+- M7 (was M6): pre-sign / typed-data inspection (Permit2, EIP-2612 at minimum)
+- v0.1 release
+- M8 (was M7): benchmark
+- **M9 (new): user-wallet EIP-712 mandate signing.** The user's own wallet signs the canonical mandate. The firewall verifies the signer against a configured owner address
+
+Where M9 sits (before or after v0.1) is open. It's listed last because OS permissions cover the single-host setup.
+
+---
+
+## 9. Commit sequence (OK between each)
+
+0. **This plan** (`docs/m3-plan.md`). **Done.**
+   *Verify:* read-through.
+1. **Mandate models and canonical hash** (`mandate/models.py`, `mandate/canonical.py`).
+   *Verify:* unit tests: frozen; discriminated union; `Budget.max` required and below 2**256−1; non-null `period` rejected; `Ratio.denominator > 0`; one-shot expiry within 24 h; no fields missing in canonical JSON; a known-answer hash (fixed mandate → fixed hex); the same hash regardless of input key order.
+2. **Registry** (`mandate/registry.py`, `registry/84532.json`).
+   *Verify:* unit tests: duplicate symbols, bad checksums and unknown chains rejected. Addresses checked by hand against issuer docs, sources noted in the file.
+3. **Mandate store** (SQLite: append-only content, status events, counters keyed by `(mandate_id, period_start)`; `0600`/`0700`; one active mandate per principal; hash check on load).
+   *Verify:* unit tests: a tampered row fails to load; a second active mandate is rejected; expiry and revoke; the permission warning; no code path updates content rows.
+4. **Compiler** (`mandate/compile.py`, pure: Draft → Mandate or a question for the user).
+   *Verify:* table-driven tests for every row of the ambiguity table in §2, plus an ungrounded address, too many decimals, float-looking input, an unknown venue, a standing instruction refused as unsupported.
+5. **LLM extractor** (`capture/extractor.py`: `httpx2` provenance re-check recorded in the commit message, SDK as the `llm` extra, `CaptureSettings` with `SecretStr`, error wrapping, `FakeExtractor` for tests, the two import-boundary tests).
+   *Verify:* unit tests with mocked HTTP; the sentinel-key leak test; the import-boundary tests; an optional live test marked `llm`, skipped without a key (like `anvil`); re-check the Starlette `filterwarnings` entry.
+6. **Capture CLI** (`mandate new | show | list | revoke`, clarification loop, template rendering, terminal-only confirmation, structured flags).
+   *Verify:* tests drive stdin with the fake extractor; confirmation without a terminal fails; one manual run against the real API on your machine.
+7. **Proxy binding and gate** (store opened at startup, refuse to start without it, the gate, `mandate_id` in `AuditRecord`, counter written with the audit record, test that agents can't reach `mandate_*`/`firewall_*`).
+   *Verify:* existing M1/M2 tests pass after fixtures create a mandate. New integration tests: no mandate → blocked and never mined upstream; expired → blocked; cap reached → blocked; with a mandate → forwarded, with `mandate_id` in the audit line; a tampered store row → blocked.
+8. **Docs and demo:** THREAT_MODEL.md (§7), README (capture quickstart, privacy note), CLAUDE.md (M3 done, roadmap from §8), `scripts/demo_m3.sh`.
+   *Verify:* read-through; full `uv run pytest`; `uv run ruff check .`.
+
+Each commit: `uv run ruff check .` plus `uv run pytest` (with `-m anvil` for integration tests), no Co-Authored-By trailer.
+
+## Roadmap pushback (outcomes in "Decisions" above)
+
+1. **`httpx2` returns with the SDK.** *Outcome:* use the SDK after a provenance re-check in commit 5, capture-only, enforced by tests (Decision 5).
+2. **"Capture before the agent reads untrusted content" holds only if the user talks to the firewall first.** Most agent frameworks deliver the chat to the agent. *Outcome:* written into the real-agent-integration milestone (Decision 2, §8).
+3. **The LLM's place in M4.** With effects-shaped mandates, the fuzzy part is resolved at capture time with the human present. An LLM deciding at transaction time is the least trustworthy place for one, and since it may only make decisions stricter, its value there is small. *Outcome:* M4's matcher decides and the LLM only explains (Decision 7).
+4. **Single-use → use-limited budget**, since single-use per transaction breaks approve-then-swap (§3). *Outcome:* agreed (Decision 6).
+5. **Same-host signing is theater; user-wallet EIP-712 signing is the real version.** *Outcome:* deferred to M9 (Decision 3).
+6. **Standing mandates** are what autonomous agents need. *Outcome:* promoted to M5, with the schema designed for them now (Decision 8).

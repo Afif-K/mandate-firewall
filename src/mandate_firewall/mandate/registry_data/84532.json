@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "chain_id": 84532,
+  "chain_name": "Base Sepolia",
+  "native": {"symbol": "ETH", "decimals": 18},
+  "tokens": [
+    {
+      "symbol": "USDC",
+      "address": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+      "decimals": 6,
+      "source": "https://developers.circle.com/stablecoins/usdc-contract-addresses (Circle, testnet table, Base Sepolia row; checked 2026-10-09)"
+    },
+    {
+      "symbol": "WETH",
+      "address": "0x4200000000000000000000000000000000000006",
+      "decimals": 18,
+      "source": "https://docs.base.org/base-chain/network-information/base-contracts (Base, Base Testnet (Sepolia) L2 table, WETH9 row; checked 2026-10-09)"
+    }
+  ],
+  "venues": [
+    {
+      "name": "uniswap",
+      "contracts": [
+        {
+          "label": "Uniswap v3 SwapRouter02",
+          "address": "0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4",
+          "source": "https://docs.uniswap.org/contracts/v3/reference/deployments/base-deployments (Uniswap, SwapRouter02 row, Base Sepolia column; checked 2026-10-09)"
+        }
+      ]
+    }
+  ],
+  "notes": [
+    "Every address was also checked on chain on 2026-10-09 against https://sepolia.base.org: eth_chainId is 0x14a34, each address has code, USDC.decimals() is 6, WETH.decimals() is 18, and SwapRouter02.WETH9() returns the WETH address above.",
+    "Not listed on purpose: Uniswap's UniversalRouter (0x492E6456D9528771018DeB9E87ef7750EF184104 on the same page) and Permit2 (0x000000000022D473030F116dDEE9F6B43aC78BA3). With them, the token approval goes to Permit2, and the router is authorized through a Permit2 allowance (a Permit2 event M2 doesn't decode yet) or an off-chain signature (invisible until M7). SwapRouter02 takes a plain ERC-20 approval, which M2's effects show directly."
+  ]
+}

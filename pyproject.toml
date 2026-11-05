@@ -62,7 +62,10 @@ asyncio_mode = "auto"
 markers = [
     "anvil: integration test that needs a local anvil binary (skipped if missing)",
     "forge: test that runs Foundry's forge (skipped if missing)",
+    "llm: live call to the LLM API; costs money, so opt-in only: pytest -m llm",
 ]
+# Live LLM tests never run by default. A later -m on the command line replaces this.
+addopts = ["-m", "not llm"]
 # Starlette's TestClient prefers httpx2 and warns when falling back to httpx. We use
 # httpx on purpose (see docs/m2-plan.md, decision 4); silence only that one message.
 filterwarnings = [

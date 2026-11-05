@@ -12,6 +12,7 @@ Status: **approved 2026-10-09**. Commit 0 (this document) done.
 6. **Defaults:** expiry 30 minutes, hard cap 24 hours for one-shot mandates, `max_transactions` 3.
 7. **Planned M4 direction** (agreed in principle): the deterministic matcher makes the decision. The LLM in M4 only writes explanations. It never allows or blocks anything. See "Roadmap pushback", item 3.
 8. **Standing mandates are a core use case, not a footnote.** M3 stays one-shot, but the schema reserves the slots standing mandates need (a `kind` field, per-period budgets, expiries beyond 24 hours), so they can be added later without a schema rewrite. A **standing-mandates milestone** goes right after M4, before real agent integration, and the roadmap is renumbered. The reasoning: **human input happens once per mandate, never per transaction, and transaction-time decisions are fully automated.** See §1, "Designed for standing mandates", and §8.
+9. **Typed addresses must carry their EIP-55 checksum** (decided 2026-11-05, after commit 4). All-lowercase and all-uppercase addresses are refused at capture, with a message that explains why: without a checksum, a typo can't be detected, and wallets and block explorers show the checksummed form. Frequent recipients go in the operator's address book, which is the low-friction path. The first version of commit 4 accepted lowercase with a warning note; that was changed in a follow-up commit. See §2.
 
 ## Context
 
@@ -178,7 +179,7 @@ The LLM never produces base units, token addresses or chain ids, and never conve
 
 **Step 2, compilation (deterministic, pure, the most heavily tested part).** Every value must be grounded:
 - **Token symbols** resolve only through the trusted registry (§2b). An unknown symbol, or one matching several entries, means we ask.
-- **Addresses** must be valid hex with a correct checksum (or all-lowercase) **and appear verbatim in the user's text**, or come from the operator's address book ("Bob" → 0x…). An address the user never typed is a hard error. This is the "no invented fields" rule.
+- **Addresses** must be valid hex with their exact EIP-55 checksum **and appear verbatim in the user's text**, or come from the operator's address book ("Bob" → 0x…). All-lowercase and all-uppercase addresses carry no checksum and are refused with an explanation (Decision 9). An address the user never typed is a hard error. This is the "no invented fields" rule.
 - **Amounts:** `amount_text` must appear in the user's text. It's parsed with `Decimal`, never `float`, converted with registry decimals, and refused if it has more decimal places than the token supports.
 - **Venues** resolve through the registry ("Uniswap" → this chain's router addresses). A swap with no venue means we ask.
 - **Expiry** comes from config (default 30 min, cap 24 h) and is shown at confirmation. **Principal** comes from config (`MANDATE_PRINCIPALS`).
@@ -202,6 +203,8 @@ Type "yes" to lock this mandate:
 | "send 50 USDC to 0xB0b…" | compiles |
 | "send some USDC to 0xB0b…" | ask: how much? (no grounded amount) |
 | "send 50 USDC to Bob" | address book hit → compiles; no hit → ask for the address |
+| "send 50 USDC to 0x7099…79c8" (all lowercase or all uppercase) | ask for the checksummed form: without a checksum a typo can't be detected (Decision 9) |
+| "send 50 USDC to 0x7099…79c8" with a wrong mixed-case checksum | ask: the address probably contains a typo |
 | "send 50 USDC" | ask: to whom? |
 | "swap my USDC for ETH" | ask: how much, and on which venue? |
 | "buy the token from that tweet" | ambiguous and unsupported. Also a red flag: the instruction leans on untrusted content |
@@ -378,7 +381,7 @@ Where M9 sits (before or after v0.1) is open (confirmed 2026-10-09: stays M9 for
    - *Symbols and venue names are grounded too*, not just addresses and amounts. They must appear in the instruction as a word (ignoring case), so an extractor that turns "USDC" into "WETH" is caught.
    - *Amount grammar:* ASCII digits with an optional `.digits`. Exponents, signs, `.5`/`5.`, `_` and non-ASCII digits are refused (Python's `\d` and `int()` accept `١٢`). **Commas are refused, not parsed:** "1,500" is 1500 or 1.5 depending on the locale, so we ask. An amount must appear as a whole number: "5" doesn't match inside "50", "1.5", "-5", "0x5" or "5e3".
    - *No `Decimal` arithmetic:* base units are computed with integers. Decimal's default 28-digit context rounds larger 18-decimal amounts; a test uses a 36-digit value. Trailing zeros don't count as extra decimals ("1.5000000" USDC is fine).
-   - *Addresses:* matched verbatim (case included), never as part of longer hex. A wrong mixed-case checksum is a question. All-lowercase compiles, with a note for the confirmation screen. Recipients that lose funds are refused: the zero address, the principal, and any registry token or venue contract.
+   - *Addresses:* matched verbatim (case included), never as part of longer hex. Only the exact EIP-55 spelling compiles. All-lowercase or all-uppercase is a question asking for the checksummed form (Decision 9). The first version accepted lowercase with a note; changed in a follow-up commit. A wrong mixed-case checksum is a question. Recipients that lose funds are refused: the zero address, the principal, and any registry token or venue contract.
    - *Swap minimum:* "at least X buy for Y sell" becomes `Ratio(X, Y)` in base units, unreduced. Without a minimum, the swap compiles with a note. A swap whose output goes to another recipient is `Unsupported` (swap, then transfer).
    - *Standing backstop:* recurring wording (every, daily, weekly, monthly, hourly, recurring, DCA, each/per day/week/month) is refused in Python even if the extractor didn't flag it.
    - *Untrusted strings are sanitized when printed:* control and format characters (terminal escapes, bidi overrides) become `?`, and long values are cut.

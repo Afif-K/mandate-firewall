@@ -7,10 +7,11 @@ Mandate unless it is grounded (docs/m3-plan.md §2):
 
 - Token symbols and venue names resolve only through the registry, and the
   symbol or name must appear in the user's instruction as a word.
-- Addresses must appear verbatim in the instruction, spelled with a valid
-  EIP-55 checksum or all lowercase. The other source is the operator's
-  address book, by a name the user typed. An address the user never wrote
-  is refused.
+- Addresses must appear verbatim in the instruction, spelled with their
+  exact EIP-55 checksum. All-lowercase and all-uppercase addresses carry no
+  checksum, so a typo in them can't be detected; they are refused. The
+  other source is the operator's address book, by a name the user typed.
+  An address the user never wrote is refused.
 - Amounts must appear in the instruction as written. They are parsed by a
   strict grammar and converted with integer arithmetic only.
 - Chain, principal, expiry and transaction cap come from the caller
@@ -396,19 +397,25 @@ def _recipient(
                 f"{what}: the address {shown} isn't in your instruction. Who should receive it?"
             )
             return None
-        letters = text[2:]
-        if letters != letters.lower() and text != to_checksum_address(text):
-            # Mixed case is a checksum, and this one is wrong: likely a typo.
-            questions.append(
-                f"{what}: the address {shown} has an invalid checksum. Check it and type it again."
-            )
-            return None
         address = to_checksum_address(text)
-        if letters == letters.lower() and any(c.isalpha() for c in letters):
-            notes.append(
-                f"{what}: the address {address} was typed without a checksum, so a "
-                "typo in it can't be detected. Compare it character by character."
-            )
+        if text != address:
+            hexdigits = text[2:]
+            if hexdigits in (hexdigits.lower(), hexdigits.upper()):
+                # One case only carries no checksum: a typo would go unnoticed
+                # and the mandate would lock the wrong recipient.
+                questions.append(
+                    f"{what}: the address {shown} has no checksum (it's all one case), so a "
+                    "typo in it can't be detected. Paste the checksummed form, with mixed "
+                    "upper and lower case, as wallets and block explorers show it. For "
+                    "someone you pay often, ask the operator to add them to the address book."
+                )
+            else:
+                # Mixed case is a checksum, and this one is wrong: likely a typo.
+                questions.append(
+                    f"{what}: the address {shown} has an invalid checksum, so it probably "
+                    "contains a typo. Check it and paste it again."
+                )
+            return None
         source = "you typed"
     elif text.lower().startswith("0x"):
         questions.append(f"{what}: {shown} isn't a valid address (0x and 40 hex digits).")

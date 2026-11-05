@@ -195,11 +195,27 @@ def test_bad_checksum_is_a_question() -> None:
     assert "invalid checksum" in q
 
 
-def test_lowercase_address_compiles_with_a_note() -> None:
+@pytest.mark.parametrize("unchecked", [BOB.lower(), "0x" + BOB[2:].upper()])
+def test_address_without_checksum_is_refused(unchecked: str) -> None:
+    # One case only: a typo in it couldn't be detected, so it can't be locked.
+    q = questions(run(f"send 50 USDC to {unchecked}", send(to=unchecked)))
+    assert "has no checksum" in q
+    assert "typo in it can't be detected" in q
+    assert "wallets and block explorers" in q
+    assert "address book" in q  # the low-friction path is named
+
+
+def test_checksummed_answer_after_an_unchecked_address_compiles() -> None:
+    # The clarification answer is appended to the instruction, so the
+    # checksummed form is grounded in the second round.
     low = BOB.lower()
-    result = compiled(run(f"send 50 USDC to {low}", send(to=low)))
-    assert result.mandate.intents[0].recipient == BOB  # type: ignore[union-attr]
-    assert any("without a checksum" in note for note in result.notes)
+    text = f"send 50 USDC to {low}\n{BOB}"
+    assert compiled(run(text, send(to=BOB))).mandate.intents[0].recipient == BOB  # type: ignore[union-attr]
+
+
+def test_address_book_is_the_low_friction_path() -> None:
+    result = run("send 50 USDC to Bob", send(to="Bob"), address_book={"Bob": BOB})
+    assert compiled(result).mandate.intents[0].recipient == BOB  # type: ignore[union-attr]
 
 
 def test_malformed_address_is_a_question() -> None:

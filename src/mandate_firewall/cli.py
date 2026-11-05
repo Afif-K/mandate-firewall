@@ -2,6 +2,9 @@
 
     mandate-firewall serve [--upstream URL] [--host H] [--port P]
                            [--audit-log PATH] [--log-level LEVEL]
+    mandate-firewall mandate new ["instruction"] | --send AMOUNT SYMBOL --to WHO
+                                 | --swap AMOUNT SYMBOL --for SYMBOL --via VENUE
+    mandate-firewall mandate show ID | list | revoke ID
 
 Every flag overrides the matching environment variable (see .env.example),
 which overrides the default in config.Settings.
@@ -27,6 +30,12 @@ def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     if args.command == "serve":
         serve(args)
+    elif args.command == "mandate":
+        # Imported here, never at module level: building the proxy for
+        # `serve` must not load capture/ (docs/m3-plan.md, decision 5).
+        from mandate_firewall.capture.commands import run
+
+        sys.exit(run(args))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -64,7 +73,56 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="(env LOG_LEVEL)",
     )
+    _add_mandate_parser(commands)
     return parser
+
+
+def _add_mandate_parser(commands: Any) -> None:
+    mandate = commands.add_parser(
+        "mandate",
+        help="create and manage mandates (settings: see .env.example)",
+    )
+    actions = mandate.add_subparsers(dest="mandate_command", required=True)
+
+    new = actions.add_parser(
+        "new",
+        help="lock a new mandate after you confirm it",
+        description="Describe what the agent may do, in words (read by the LLM) or with "
+        "--send/--swap (no LLM). You confirm a summary before anything is stored.",
+    )
+    new.add_argument(
+        "instruction",
+        nargs="?",
+        help='e.g. "send 50 USDC to 0x..."; asked for interactively if left out',
+    )
+    new.add_argument("--send", nargs=2, metavar=("AMOUNT", "SYMBOL"), help="transfer, no LLM")
+    new.add_argument("--to", metavar="ADDRESS_OR_NAME", help="recipient for --send")
+    new.add_argument("--swap", nargs=2, metavar=("AMOUNT", "SYMBOL"), help="swap, no LLM")
+    new.add_argument("--for", dest="buy", metavar="SYMBOL", help="token to buy with --swap")
+    new.add_argument("--via", metavar="VENUE", help="venue for --swap, e.g. uniswap")
+    new.add_argument("--min-out", metavar="AMOUNT", help="least amount to receive with --swap")
+    new.add_argument("--principal", metavar="ADDRESS", help="which of MANDATE_PRINCIPALS")
+    new.add_argument("--replace", action="store_true", help="revoke the account's active mandate")
+    new.add_argument(
+        "--minutes",
+        type=int,
+        choices=range(1, 24 * 60 + 1),
+        metavar="1-1440",
+        help="lifetime (env MANDATE_LIFETIME_MINUTES, default 30)",
+    )
+    new.add_argument(
+        "--max-transactions",
+        type=int,
+        choices=range(1, 1001),
+        metavar="1-1000",
+        help="transaction cap (env MANDATE_MAX_TRANSACTIONS, default 3)",
+    )
+
+    show = actions.add_parser("show", help="show one mandate and its status")
+    show.add_argument("id", help="mandate id, or its first 8+ hex digits")
+    actions.add_parser("list", help="list all mandates, newest first")
+    revoke = actions.add_parser("revoke", help="revoke a mandate")
+    revoke.add_argument("id", help="mandate id, or its first 8+ hex digits")
 
 
 def build_settings(args: argparse.Namespace) -> Settings:

@@ -24,11 +24,20 @@ def _outside_capture() -> list[Path]:
     return [p for p in _modules() if CAPTURE not in p.parents]
 
 
-def _imports(path: Path) -> set[str]:
-    """Absolute module names a file imports, relative imports resolved."""
+def _imports(path: Path, *, module_level_only: bool = False) -> set[str]:
+    """Absolute module names a file imports, relative imports resolved.
+    With module_level_only, imports inside functions are left out."""
     package = ".".join(path.relative_to(PACKAGE.parent).with_suffix("").parts[:-1])
+    tree = ast.parse(path.read_text(), str(path))
+    skip: set[int] = set()
+    if module_level_only:
+        for fn in ast.walk(tree):
+            if isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef):
+                skip.update(id(node) for node in ast.walk(fn))
     found: set[str] = set()
-    for node in ast.walk(ast.parse(path.read_text(), str(path))):
+    for node in ast.walk(tree):
+        if id(node) in skip:
+            continue
         if isinstance(node, ast.Import):
             found.update(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom):
@@ -49,9 +58,24 @@ def test_the_walk_sees_the_package() -> None:
 
 
 def test_nothing_outside_capture_imports_it() -> None:
+    """Never at module level. Inside a function, only cli.py may, for the
+    `mandate` command; the subprocess test below checks `serve` stays clean."""
     for path in _outside_capture():
-        bad = {m for m in _imports(path) if m.startswith("mandate_firewall.capture")}
-        assert not bad, f"{path.relative_to(PACKAGE)} imports {bad}"
+        everywhere = {m for m in _imports(path) if m.startswith("mandate_firewall.capture")}
+        top = {
+            m
+            for m in _imports(path, module_level_only=True)
+            if m.startswith("mandate_firewall.capture")
+        }
+        assert not top, f"{path.relative_to(PACKAGE)} imports {top} at module level"
+        if path != PACKAGE / "cli.py":
+            assert not everywhere, f"{path.relative_to(PACKAGE)} imports {everywhere}"
+
+
+def test_cli_imports_capture_lazily() -> None:
+    # The allowance above is used, and only for the commands module.
+    lazy = {m for m in _imports(PACKAGE / "cli.py") if m.startswith("mandate_firewall.capture")}
+    assert lazy == {"mandate_firewall.capture.commands", "mandate_firewall.capture.commands.run"}
 
 
 def test_no_llm_sdk_anywhere() -> None:

@@ -6,9 +6,12 @@ just what the agent got back but what did (or did not) reach the node.
 
 import json
 import logging
+import sqlite3
 import traceback
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -20,6 +23,7 @@ from fastapi.testclient import TestClient
 
 from mandate_firewall.audit import AuditLog, AuditLogError
 from mandate_firewall.config import Settings
+from mandate_firewall.mandate.store import MandateStore, MandateStoreError
 from mandate_firewall.models import (
     CallFrame,
     CallType,
@@ -41,6 +45,7 @@ from mandate_firewall.proxy.jsonrpc import (
 from mandate_firewall.proxy.upstream import UpstreamClient
 from mandate_firewall.simulate.node import SimulatorStartupError
 from mandate_firewall.simulate.simulator import TransactionRejectedError
+from tests.mandates import native_transfer_mandate, seed_store
 
 UPSTREAM = "http://upstream.test:8545"
 CHAIN_ID = 84532  # Base Sepolia
@@ -51,13 +56,18 @@ RECIPIENT = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
 
 
 AUDIT_PATH = "logs/audit.jsonl"  # the default, relative to the working directory
+MANDATE_DB = Path("state/mandates.db")  # likewise
 
 
 @pytest.fixture(autouse=True)
-def _in_tmp_dir(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-    # The proxy writes its audit log relative to the working directory; keep
-    # it out of the repo.
+def mandate_id(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> str:
+    """Every test runs in its own directory, with an active mandate for
+    SENDER in the default store: without one the proxy blocks everything."""
+    # The proxy writes its audit log and reads its store relative to the
+    # working directory; keep them out of the repo.
     monkeypatch.chdir(tmp_path)
+    (mid,) = seed_store(MANDATE_DB, native_transfer_mandate(CHAIN_ID, SENDER, max_transactions=100))
+    return mid
 
 
 def audit_records() -> list[dict[str, Any]]:
@@ -451,13 +461,14 @@ def test_valid_transaction_is_decoded_logged_and_forwarded(
     assert f"from={SENDER}" in caplog.text
 
 
-def test_allowed_transaction_is_audited_once(client: TestClient) -> None:
+def test_allowed_transaction_is_audited_once(client: TestClient, mandate_id: str) -> None:
     transfer = "0xa9059cbb" + "00" * 12 + RECIPIENT[2:].lower() + f"{10**30:064x}"
     raw = sign(to=RECIPIENT, value=0, gas=60_000, data=transfer)
     client.post("/", json=rpc("eth_sendRawTransaction", [raw]))
     (record,) = audit_records()
     assert record["decision"] == "allow"
     assert record["reason"] is None
+    assert (record["mandate_id"], record["mandate_transaction"]) == (mandate_id, 1)
     assert record["hash"] == "0x" + keccak(hexstr=raw).hex()
     assert record["tx_type"] == 2
     assert record["chain_id"] == str(CHAIN_ID)
@@ -679,3 +690,275 @@ def test_transactions_blocked_by_checks_are_not_simulated(
     client.post("/", json=rpc("eth_sendRawTransaction", [sign(chainId=1)]))
     client.post("/", json=rpc("eth_sendRawTransaction", ["0xdeadbeef"]))
     assert simulator.txs == []
+
+
+# --- mandate gate (M3) --------------------------------------------------------------
+
+OTHER_KEY = "0x" + "22" * 32  # a second throwaway sender, with no mandate
+OTHER = Account.from_key(OTHER_KEY).address
+
+
+def sign_as(key: str, **overrides: Any) -> str:
+    tx: dict[str, Any] = {
+        "type": 2,
+        "chainId": CHAIN_ID,
+        "nonce": 0,
+        "maxPriorityFeePerGas": 1_000_000_000,
+        "maxFeePerGas": 3_000_000_000,
+        "gas": 21_000,
+        "to": RECIPIENT,
+        "value": 10**15,
+    } | overrides
+    return "0x" + bytes(Account.sign_transaction(tx, key).raw_transaction).hex()
+
+
+def send(client: TestClient, raw: str) -> dict[str, Any]:
+    return client.post("/", json=rpc("eth_sendRawTransaction", [raw])).json()
+
+
+def writer() -> MandateStore:
+    """The store as the capture CLI opens it, next to the running proxy."""
+    return MandateStore(MANDATE_DB)
+
+
+def assert_blocked(
+    body: dict[str, Any], node: FakeNode, simulator: FakeSimulator, reason: str
+) -> dict[str, Any]:
+    """Blocked with -32003 before simulation, never forwarded, audited once."""
+    assert error_code(body) == TRANSACTION_REJECTED
+    assert body["error"]["message"] == f"transaction rejected: {reason}"
+    assert node.calls == []
+    assert simulator.txs == []
+    (record,) = audit_records()
+    assert (record["decision"], record["reason"]) == ("block", reason)
+    assert record["mandate_transaction"] is None
+    return record
+
+
+def test_refuses_to_start_without_mandate_store(
+    node: FakeNode, mock_upstream: respx.MockRouter, tmp_path: Path
+) -> None:
+    with pytest.raises(MandateStoreError, match="does not exist"):
+        with make_client(node, mandate_db_path=tmp_path / "missing.db"):
+            pass
+    assert node.calls == []  # checked before the upstream is even contacted
+    assert not (tmp_path / "missing.db").exists()  # and never created
+
+
+def test_refuses_to_start_with_an_uninitialized_store(
+    node: FakeNode, mock_upstream: respx.MockRouter, tmp_path: Path
+) -> None:
+    empty = tmp_path / "empty.db"
+    empty.touch(mode=0o600)
+    with pytest.raises(MandateStoreError, match="not an initialized mandate store"):
+        with make_client(node, mandate_db_path=empty):
+            pass
+    assert empty.stat().st_size == 0  # the proxy never creates the schema
+
+
+def test_refuses_to_start_with_a_tampered_store(
+    node: FakeNode, mock_upstream: respx.MockRouter
+) -> None:
+    tamper_expiry(MANDATE_DB)
+    with pytest.raises(MandateStoreError, match="lookup columns do not match"):
+        with make_client(node):
+            pass
+    assert node.calls == []
+
+
+def test_proxy_opens_the_store_counters_only(client: TestClient) -> None:
+    proxy = client.app.state.proxy  # type: ignore[attr-defined]
+    assert proxy.mandates.counters_only
+    with pytest.raises(MandateStoreError, match="counters-only"):
+        proxy.mandates.add(native_transfer_mandate(CHAIN_ID, OTHER))
+    with pytest.raises(sqlite3.DatabaseError, match="not authorized"):
+        proxy.mandates._db.execute("DROP TRIGGER mandates_no_update")
+
+
+def test_no_mandate_is_blocked(
+    client: TestClient, node: FakeNode, simulator: FakeSimulator
+) -> None:
+    body = send(client, sign_as(OTHER_KEY))
+    reason = f"no mandate for sender {OTHER} on chain {CHAIN_ID}"
+    record = assert_blocked(body, node, simulator, reason)
+    assert record["mandate_id"] is None
+
+
+def test_mandate_for_another_chain_does_not_count(
+    client: TestClient, node: FakeNode, simulator: FakeSimulator
+) -> None:
+    seed_store(MANDATE_DB, native_transfer_mandate(1, OTHER))
+    body = send(client, sign_as(OTHER_KEY))
+    assert_blocked(body, node, simulator, f"no mandate for sender {OTHER} on chain {CHAIN_ID}")
+
+
+def test_expired_mandate_is_blocked(
+    client: TestClient, node: FakeNode, simulator: FakeSimulator
+) -> None:
+    created = datetime.now(UTC) - timedelta(hours=2)
+    (mid,) = seed_store(
+        MANDATE_DB,
+        native_transfer_mandate(CHAIN_ID, OTHER, created_at=created, minutes=60),
+        at=created + timedelta(minutes=1),  # written while it was still valid
+    )
+    body = send(client, sign_as(OTHER_KEY))
+    record = assert_blocked(body, node, simulator, f"mandate {mid} is expired")
+    assert record["mandate_id"] is None  # nothing was charged to it
+
+
+def test_revoked_mandate_is_blocked(
+    client: TestClient, node: FakeNode, simulator: FakeSimulator, mandate_id: str
+) -> None:
+    assert writer().revoke(mandate_id)  # while the proxy is running
+    body = send(client, sign())
+    assert_blocked(body, node, simulator, f"mandate {mandate_id} is revoked")
+
+
+def test_transaction_cap_is_enforced(
+    client: TestClient, node: FakeNode, simulator: FakeSimulator
+) -> None:
+    (mid,) = seed_store(MANDATE_DB, native_transfer_mandate(CHAIN_ID, OTHER, max_transactions=2))
+    for nonce in (0, 1):
+        assert "result" in send(client, sign_as(OTHER_KEY, nonce=nonce))
+    assert [r["mandate_transaction"] for r in audit_records()] == [1, 2]
+    assert writer().get(mid).status == "exhausted"
+
+    node.calls.clear()
+    simulator.txs.clear()
+    body = send(client, sign_as(OTHER_KEY, nonce=2))
+    assert error_code(body) == TRANSACTION_REJECTED
+    reason = f"mandate {mid} is exhausted (2 of 2 transactions used)"
+    assert body["error"]["message"] == f"transaction rejected: {reason}"
+    assert node.calls == [] and simulator.txs == []
+    assert audit_records()[-1]["reason"] == reason
+
+
+def test_blocked_transactions_are_not_charged(
+    client: TestClient, node: FakeNode, simulator: FakeSimulator, mandate_id: str
+) -> None:
+    simulator.outcome = "revert"
+    send(client, sign())
+    simulator.outcome = TransactionRejectedError("nonce too low")
+    send(client, sign())
+    assert node.calls == []
+    assert writer().get(mandate_id).transactions == 0
+    # Blocked after the gate: the record says which mandate it was checked against.
+    assert [(r["decision"], r["mandate_id"]) for r in audit_records()] == [
+        ("block", mandate_id),
+        ("block", mandate_id),
+    ]
+
+
+def test_mandate_revoked_during_simulation_is_blocked(
+    client: TestClient, node: FakeNode, simulator: FakeSimulator, mandate_id: str
+) -> None:
+    # The lookup passes, then the user revokes while the fork is simulating.
+    # The charge after simulation re-checks, so the transaction is blocked.
+    original = simulator.simulate
+
+    async def revoke_then_simulate(tx: DecodedTransaction) -> Effects:
+        assert writer().revoke(mandate_id)
+        return await original(tx)
+
+    simulator.simulate = revoke_then_simulate  # type: ignore[method-assign]
+    body = send(client, sign())
+    assert error_code(body) == TRANSACTION_REJECTED
+    assert body["error"]["message"] == f"transaction rejected: mandate {mandate_id} is revoked"
+    assert node.calls == []
+    (record,) = audit_records()
+    assert (record["decision"], record["mandate_id"]) == ("block", mandate_id)
+    assert record["effects"] is not None  # what it would have done
+
+
+def tamper_expiry(path: Path) -> None:
+    """Edit a lookup column the way someone with write access to the file
+    could: drop the trigger that stops UPDATE, then extend the expiry."""
+    db = sqlite3.connect(path, isolation_level=None)
+    db.execute("DROP TRIGGER mandates_no_update")
+    db.execute("UPDATE mandates SET expires_at = '2099-01-01T00:00:00Z'")
+    db.close()
+
+
+def test_tampered_store_row_is_blocked(
+    client: TestClient,
+    node: FakeNode,
+    simulator: FakeSimulator,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    tamper_expiry(MANDATE_DB)  # after startup, so the startup scan can't catch it
+    with caplog.at_level(logging.ERROR, logger="mandate_firewall"):
+        body = send(client, sign())
+    assert_blocked(body, node, simulator, "mandate store integrity failure")
+    assert "lookup columns do not match content" in caplog.text  # details: operator only
+
+
+def test_store_error_is_blocked(
+    client: TestClient,
+    node: FakeNode,
+    simulator: FakeSimulator,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail(self: MandateStore, chain_id: int, principal: str) -> None:
+        raise MandateStoreError("cannot read mandate store: disk I/O error")
+
+    monkeypatch.setattr(MandateStore, "active_for", fail)
+    assert_blocked(send(client, sign()), node, simulator, "mandate store unavailable")
+
+
+def test_counter_write_failure_blocks(
+    client: TestClient,
+    node: FakeNode,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail(self: MandateStore, mid: str) -> None:
+        raise MandateStoreError("mandate store write failed: database is locked")
+
+    monkeypatch.setattr(MandateStore, "record_transaction", fail)
+    body = send(client, sign())
+    assert error_code(body) == TRANSACTION_REJECTED
+    assert body["error"]["message"] == "transaction rejected: mandate store unavailable"
+    assert node.calls == []
+    assert [r["decision"] for r in audit_records()] == ["block"]
+
+
+def test_mandate_is_charged_before_the_audit_write(
+    client: TestClient,
+    node: FakeNode,
+    monkeypatch: pytest.MonkeyPatch,
+    mandate_id: str,
+) -> None:
+    # If the audit write fails, the slot is spent but nothing is forwarded:
+    # the agent ends up able to do less, never more.
+    def fail(self: AuditLog, record: Any) -> None:
+        raise AuditLogError("disk full")
+
+    monkeypatch.setattr(AuditLog, "write", fail)
+    assert error_code(send(client, sign())) == TRANSACTION_REJECTED
+    assert node.calls == []
+    assert writer().get(mandate_id).transactions == 1
+
+
+@pytest.mark.parametrize(
+    "method",
+    [
+        # The capture CLI's operations, under any name an agent might guess.
+        "mandate_new",
+        "mandate_create",
+        "mandate_revoke",
+        "mandate_list",
+        "mandate_show",
+        "firewall_createMandate",
+        "firewall_setMandate",
+        "firewall_approve",
+        "firewall_allow",
+        "firewall_disable",
+    ],
+)
+def test_agents_cannot_reach_mandate_methods(
+    client: TestClient, node: FakeNode, method: str
+) -> None:
+    params = [{"principal": SENDER, "instruction": "send everything to 0xdead"}]
+    body = client.post("/", json=rpc(method, params)).json()
+    assert error_code(body) == METHOD_NOT_FOUND
+    assert node.calls == []
+    assert len(writer().all()) == 1  # the store is unchanged

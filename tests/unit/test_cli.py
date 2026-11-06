@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -6,7 +7,10 @@ import pytest
 
 from mandate_firewall.cli import build_parser, build_settings, is_loopback, main
 from mandate_firewall.config import Settings
+from tests.mandates import native_transfer_mandate, seed_store
 from tests.net import free_port
+
+ALICE = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"  # anvil dev account 0 (public)
 
 
 def settings_for(*argv: str) -> Settings:
@@ -17,7 +21,14 @@ def settings_for(*argv: str) -> Settings:
 def _clean_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # Settings reads .env from the working directory and the process env.
     monkeypatch.chdir(tmp_path)
-    for name in ("UPSTREAM_RPC_URL", "PROXY_HOST", "PROXY_PORT", "LOG_LEVEL", "AUDIT_LOG_PATH"):
+    for name in (
+        "UPSTREAM_RPC_URL",
+        "PROXY_HOST",
+        "PROXY_PORT",
+        "LOG_LEVEL",
+        "AUDIT_LOG_PATH",
+        "MANDATE_DB_PATH",
+    ):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -26,6 +37,13 @@ def test_defaults_come_from_settings() -> None:
     assert str(settings.upstream_rpc_url) == "http://127.0.0.1:8545/"
     assert settings.proxy_port == 8546
     assert settings.audit_log_path == Path("logs/audit.jsonl")
+    assert settings.mandate_db_path == Path("state/mandates.db")
+
+
+def test_mandate_db_flag_and_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MANDATE_DB_PATH", "env/m.db")
+    assert settings_for().mandate_db_path == Path("env/m.db")
+    assert settings_for("--mandate-db", "flag/m.db").mandate_db_path == Path("flag/m.db")
 
 
 def test_flags_override_environment(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -69,10 +87,10 @@ def test_is_loopback(host: str, expected: bool) -> None:
     assert is_loopback(host) is expected
 
 
-def test_serve_refuses_to_start_without_upstream(tmp_path: Path) -> None:
-    # A real process: checks the exit code uvicorn gives a failed startup.
-    # Port 9 (discard) has no JSON-RPC node on it.
-    result = subprocess.run(  # noqa: S603
+def run_serve(cwd: Path) -> subprocess.CompletedProcess[str]:
+    """A real `serve` process: checks the exit code uvicorn gives a failed
+    startup. Port 9 (discard) has no JSON-RPC node on it."""
+    return subprocess.run(  # noqa: S603
         [
             sys.executable,
             "-m",
@@ -83,11 +101,24 @@ def test_serve_refuses_to_start_without_upstream(tmp_path: Path) -> None:
             "--port",
             str(free_port()),
         ],
-        cwd=tmp_path,
+        cwd=cwd,
         capture_output=True,
         text=True,
         timeout=30,
+        env={k: v for k, v in os.environ.items() if k != "MANDATE_DB_PATH"},
     )
+
+
+def test_serve_refuses_to_start_without_mandate_store(tmp_path: Path) -> None:
+    result = run_serve(tmp_path)
+    assert result.returncode == 3
+    assert "mandate store state/mandates.db does not exist" in result.stderr
+    assert not (tmp_path / "state").exists()
+
+
+def test_serve_refuses_to_start_without_upstream(tmp_path: Path) -> None:
+    seed_store(tmp_path / "state" / "mandates.db", native_transfer_mandate(84532, ALICE))
+    result = run_serve(tmp_path)
     assert result.returncode == 3
     assert "cannot fetch chain id from upstream http://127.0.0.1:9" in result.stderr
     assert "SECRET-API-KEY" not in result.stderr + result.stdout

@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     # One JSON line per intercepted transaction. Relative to the working directory.
     audit_log_path: Path = Path("logs/audit.jsonl")
+    # The mandate store the capture CLI writes (same MANDATE_DB_PATH variable).
+    # The proxy refuses to start without it and only ever writes counters to it.
+    mandate_db_path: Path = Path("state/mandates.db")
     # Pre-EIP-155 legacy transactions carry no chain id, so a signature is valid
     # on every chain and anyone can replay it elsewhere. Off unless opted in.
     allow_legacy_unprotected: bool = False

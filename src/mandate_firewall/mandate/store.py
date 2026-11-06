@@ -1,10 +1,11 @@
 """The mandate store: locked mandates on disk, in SQLite.
 
 The capture CLI writes mandates here, running as the firewall's OS user. The
-proxy reads them, and its only write is counting transactions. The agent runs
-as another user and can't open the file, so file permissions are the boundary
-(docs/m3-plan.md §3). The file is created 0600; a store that other users can
-reach is warned about, like the audit log.
+proxy reads them, and its only write is counting transactions: it opens the
+store with counters_only=True, which an SQLite authorizer enforces on the
+connection. The agent runs as another user and can't open the file, so file
+permissions are the boundary (docs/m3-plan.md §3). The file is created 0600;
+a store that other users can reach is warned about, like the audit log.
 
 Three tables:
 - mandates: the canonical JSON of each mandate, keyed by its sha256 id.
@@ -110,6 +111,32 @@ class MandateNotActiveError(MandateStoreError):
     """The mandate is expired, revoked or exhausted, or doesn't exist."""
 
 
+# What a counters_only connection may write: counters, the "exhausted" event a
+# full counter implies, and SQLite's AUTOINCREMENT bookkeeping for events.
+# Everything not listed is denied: no mandate rows, no status changes by
+# UPDATE, no DELETE, no schema changes (DROP TRIGGER), no PRAGMA, no ATTACH.
+_COUNTERS_ONLY_WRITES: dict[int, frozenset[str]] = {
+    sqlite3.SQLITE_INSERT: frozenset({"counters", "events", "sqlite_sequence"}),
+    sqlite3.SQLITE_UPDATE: frozenset({"counters", "sqlite_sequence"}),
+}
+_COUNTERS_ONLY_ALWAYS = frozenset(
+    {
+        sqlite3.SQLITE_SELECT,
+        sqlite3.SQLITE_READ,
+        sqlite3.SQLITE_TRANSACTION,
+        sqlite3.SQLITE_FUNCTION,
+    }
+)
+
+
+def _counters_only(action: int, arg1: str | None, *_: object) -> int:
+    if action in _COUNTERS_ONLY_ALWAYS:
+        return sqlite3.SQLITE_OK
+    if arg1 is not None and arg1 in _COUNTERS_ONLY_WRITES.get(action, frozenset()):
+        return sqlite3.SQLITE_OK
+    return sqlite3.SQLITE_DENY
+
+
 class MandateStatus(StrEnum):
     ACTIVE = "active"
     EXPIRED = "expired"
@@ -128,17 +155,29 @@ class StoredMandate(BaseModel):
 
 class MandateStore:
     """One SQLite connection, used under a lock. Each write is one
-    transaction that SQLite fsyncs before it returns (synchronous=FULL)."""
+    transaction that SQLite fsyncs before it returns (synchronous=FULL).
+
+    counters_only=True is the proxy's mode: the file must already be an
+    initialized store, add() and revoke() refuse, and an SQLite authorizer
+    on the connection denies every write except transaction counters. So a
+    bug (or a future code path) in the proxy can't create, change or revoke
+    a mandate, whatever SQL it runs. Fully read-only isn't possible: the
+    counter that enforces max_transactions lives in this file.
+    """
 
     def __init__(
         self,
         path: Path,
         *,
         create: bool = False,
+        counters_only: bool = False,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         busy_timeout: float = 5.0,
     ) -> None:
+        if create and counters_only:
+            raise ValueError("a counters_only store can't create the file")
         self.path = path
+        self.counters_only = counters_only
         self._clock = clock
         self._lock = threading.Lock()
         try:
@@ -152,10 +191,19 @@ class MandateStore:
             self._db = sqlite3.connect(
                 path, timeout=busy_timeout, isolation_level=None, check_same_thread=False
             )
+            if counters_only:
+                # Before any PRAGMA below: journal_mode = WAL writes to the
+                # file, and the proxy must not write to a file that isn't
+                # already our store (an empty file, someone else's database).
+                self._init_schema()
             self._db.execute("PRAGMA foreign_keys = ON")
             self._db.execute("PRAGMA journal_mode = WAL")
             self._db.execute("PRAGMA synchronous = FULL")
-            self._init_schema()
+            if counters_only:
+                # Installed last: the PRAGMAs above are the only ones we run.
+                self._db.set_authorizer(_counters_only)
+            else:
+                self._init_schema()
         except (sqlite3.Error, OSError) as exc:
             raise MandateStoreError(f"cannot open mandate store {path}: {exc}") from None
 
@@ -168,6 +216,7 @@ class MandateStore:
         """Store a confirmed mandate and return its id. If the principal
         already has an active mandate on this chain, refuse, or with
         replace=True revoke it in the same transaction."""
+        self._refuse_if_counters_only("add")
         now = self._now()
         if mandate.expires_at <= now:
             raise MandateStoreError("the mandate has already expired")
@@ -199,6 +248,7 @@ class MandateStore:
 
     def revoke(self, mid: str) -> bool:
         """Revoke a mandate. False if it had already stopped being active."""
+        self._refuse_if_counters_only("revoke")
         now = self._now()
         with self._write() as db:
             stored = self._load(db, mid, now)
@@ -244,6 +294,14 @@ class MandateStore:
             raise MandateIntegrityError("more than one active mandate for one principal")
         return active[0] if active else None
 
+    def latest_for(self, chain_id: int, principal: str) -> StoredMandate | None:
+        """The principal's most recently stored mandate on this chain, whatever
+        its status, or None. For saying why there is no active mandate
+        ("expired", "exhausted"); active_for() is what decides."""
+        with self._lock:
+            loaded = self._for_principal(self._db, chain_id, principal, self._now())
+        return loaded[-1] if loaded else None
+
     def all(self) -> list[StoredMandate]:
         """Every stored mandate, oldest first."""
         with self._lock:
@@ -255,6 +313,10 @@ class MandateStore:
 
     def _now(self) -> datetime:
         return self._clock().replace(microsecond=0)
+
+    def _refuse_if_counters_only(self, operation: str) -> None:
+        if self.counters_only:
+            raise MandateStoreError(f"store opened counters-only: {operation} is not allowed")
 
     @contextmanager
     def _write(self) -> Iterator[sqlite3.Connection]:
@@ -281,6 +343,14 @@ class MandateStore:
     def _active(
         self, db: sqlite3.Connection, chain_id: int, principal: str, now: datetime
     ) -> list[StoredMandate]:
+        loaded = self._for_principal(db, chain_id, principal, now)
+        return [s for s in loaded if s.status is MandateStatus.ACTIVE]
+
+    def _for_principal(
+        self, db: sqlite3.Connection, chain_id: int, principal: str, now: datetime
+    ) -> list[StoredMandate]:
+        """Every mandate of the principal on this chain, oldest first. Each is
+        fully checked, so one tampered row fails the whole lookup."""
         ids = [
             row[0]
             for row in db.execute(
@@ -288,8 +358,7 @@ class MandateStore:
                 (chain_id, principal),
             )
         ]
-        loaded = [self._load(db, mid, now) for mid in ids]
-        return [s for s in loaded if s.status is MandateStatus.ACTIVE]
+        return [self._load(db, mid, now) for mid in ids]
 
     def _load(self, db: sqlite3.Connection, mid: str, now: datetime) -> StoredMandate:
         try:
@@ -350,6 +419,9 @@ class MandateStore:
             return
         if version != 0:
             raise MandateStoreError(f"unknown mandate store schema version {version}")
+        if self.counters_only:
+            # The proxy never creates the schema: an empty file is not a store.
+            raise MandateStoreError("file is not an initialized mandate store")
         tables = self._db.execute("SELECT count(*) FROM sqlite_master").fetchone()[0]
         if tables:
             raise MandateStoreError("file has tables but no mandate store schema version")

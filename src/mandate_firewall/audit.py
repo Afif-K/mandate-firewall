@@ -50,6 +50,11 @@ class AuditRecord(BaseModel):
     ts: datetime = Field(default_factory=lambda: datetime.now(UTC))
     decision: Decision
     reason: str | None = None
+    # The confirmed mandate this transaction was checked against, if one was
+    # found, and for allowed transactions which of its transactions this is
+    # (1 = the first). Blocked transactions are never charged, so None.
+    mandate_id: str | None = None
+    mandate_transaction: int | None = None
     hash: str | None = None
     tx_type: int | None = None
     chain_id: BigInt | None = None
@@ -80,10 +85,14 @@ class AuditRecord(BaseModel):
         *,
         effects: Effects | None = None,
         simulation_error: str | None = None,
+        mandate_id: str | None = None,
+        mandate_transaction: int | None = None,
     ) -> "AuditRecord":
         return cls(
             decision=decision,
             reason=reason,
+            mandate_id=mandate_id,
+            mandate_transaction=mandate_transaction,
             effects=effects,
             simulation_error=simulation_error,
             hash=tx.hash,

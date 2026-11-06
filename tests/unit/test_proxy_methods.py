@@ -60,3 +60,13 @@ def test_no_signing_or_sending_method_is_forwarded() -> None:
     for method in READ_ONLY_METHODS:
         assert "send" not in method.lower()
         assert "sign" not in method.lower()
+
+
+def test_no_mandate_or_firewall_methods_are_exposed() -> None:
+    # Decision 2 (docs/m3-plan.md): mandates come only from the user, through
+    # the capture CLI. The agent's RPC must have no way to create, change,
+    # select or even list them.
+    for method in INTERCEPTED_METHODS | READ_ONLY_METHODS:
+        assert not method.lower().startswith(("mandate", "firewall")), method
+        assert classify("mandate_" + method) is MethodClass.DENY
+        assert classify("firewall_" + method) is MethodClass.DENY

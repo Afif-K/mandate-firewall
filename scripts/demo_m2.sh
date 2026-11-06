@@ -3,7 +3,11 @@
 #
 # Start these first, each in its own terminal, from the repo root:
 #   anvil --chain-id 84532
+#   uv run mandate-firewall mandate new --send 0.1 ETH \
+#       --to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8 --max-transactions 10
 #   uv run mandate-firewall serve --upstream http://127.0.0.1:8545
+# Since M3 the proxy blocks senders without an active mandate. Until M4 it
+# doesn't compare effects with the mandate, so this one covers every step here.
 # Then, from the repo root:
 #   scripts/demo_m2.sh
 #

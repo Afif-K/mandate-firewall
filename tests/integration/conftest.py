@@ -13,9 +13,12 @@ from typing import Any
 import httpx
 import pytest
 
+from tests.mandates import native_transfer_mandate, seed_store
 from tests.net import free_port
 
 STARTUP_TIMEOUT_SECONDS = 15.0
+# anvil's dev account 0, the sender in the M1/M2 integration tests (public key).
+DEV_ACCOUNT_0 = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
 
 
 def rpc_call(url: str, method: str, params: Any = None) -> dict[str, Any]:
@@ -86,6 +89,7 @@ def anvil(workdir: Path) -> Iterator[Service]:
 @dataclass
 class Proxy(Service):
     audit_log: Path
+    mandate_db: Path
 
     def audit_records(self) -> list[dict[str, Any]]:
         if not self.audit_log.exists():
@@ -94,12 +98,28 @@ class Proxy(Service):
 
 
 def start_proxy(
-    upstream: Service, workdir: Path, name: str = "proxy", env: dict[str, str] | None = None
+    upstream: Service,
+    workdir: Path,
+    name: str = "proxy",
+    env: dict[str, str] | None = None,
+    mandate_db: Path | None = None,
 ) -> Proxy:
     """`mandate-firewall serve` in front of `upstream`, with its own private
-    simulation fork (an anvil child process)."""
+    simulation fork (an anvil child process).
+
+    Without `mandate_db`, the proxy gets its own store holding a broad
+    mandate for dev account 0 (24 hours, 1000 transactions), so tests from
+    before the M3 gate run unchanged. Tests of the gate pass their own."""
     port = free_port()
     audit_log = workdir / f"{name}-audit.jsonl"
+    if mandate_db is None:
+        mandate_db = workdir / f"{name}-state" / "mandates.db"
+        if not mandate_db.exists():
+            chain_id = int(rpc_result(upstream.url, "eth_chainId"), 16)
+            broad = native_transfer_mandate(
+                chain_id, DEV_ACCOUNT_0, minutes=24 * 60, max_transactions=1000
+            )
+            seed_store(mandate_db, broad)
     argv = [
         sys.executable,
         "-m",
@@ -111,9 +131,11 @@ def start_proxy(
         str(port),
         "--audit-log",
         str(audit_log),
+        "--mandate-db",
+        str(mandate_db),
     ]
     service = start(name, argv, port, workdir, env)
-    return Proxy(service.url, service.process, service.log, audit_log)
+    return Proxy(service.url, service.process, service.log, audit_log, mandate_db)
 
 
 @pytest.fixture(scope="module")

@@ -4,9 +4,14 @@ Request flow:
     HTTP body -> size/content-type checks -> JSON parse -> single or batch
     -> per request: validate -> classify method -> deny | forward | intercept
 
-An intercepted transaction is decoded, checked, simulated on the private
-fork, audited, and only then forwarded. It is blocked if any step fails or
-if it reverts in simulation.
+An intercepted transaction is decoded, checked, matched to its sender's
+active mandate, simulated on the private fork, charged to the mandate,
+audited, and only then forwarded. It is blocked if any step fails, if the
+sender has no active mandate, or if it reverts in simulation.
+
+Until M4, a transaction from a sender that has an active mandate is not yet
+compared with the mandate's content: the gate checks that a confirmed,
+unexpired mandate exists and has transactions left, nothing more.
 
 Run it with `mandate-firewall serve` (see cli.py), which also sets up logging.
 """
@@ -24,7 +29,21 @@ from mandate_firewall.audit import AuditLog, AuditLogError, AuditRecord
 from mandate_firewall.config import Settings, redact_url
 from mandate_firewall.decode.calldata import decode_calldata
 from mandate_firewall.decode.transaction import TransactionDecodeError, decode_raw_transaction
-from mandate_firewall.models import Decision, DecodedTransaction, Effects, SimulationStatus
+from mandate_firewall.mandate.store import (
+    MandateIntegrityError,
+    MandateNotActiveError,
+    MandateStatus,
+    MandateStore,
+    MandateStoreError,
+    StoredMandate,
+)
+from mandate_firewall.models import (
+    Decision,
+    DecodedCall,
+    DecodedTransaction,
+    Effects,
+    SimulationStatus,
+)
 from mandate_firewall.proxy.jsonrpc import (
     INVALID_PARAMS,
     INVALID_REQUEST,
@@ -48,6 +67,10 @@ logger = logging.getLogger(__name__)
 # A max-size raw transaction (128 KiB) is 256 KiB as hex; leave room for a batch.
 MAX_REQUEST_BYTES = 1024 * 1024
 MAX_BATCH_SIZE = 100
+# How long a transaction waits for the mandate store's write lock (held
+# briefly by `mandate new`/`revoke`) before it is blocked. The store is
+# synchronous, so this is also how long the event loop can stall.
+MANDATE_STORE_BUSY_TIMEOUT_SECONDS = 1.0
 
 
 class UpstreamUnavailableError(RuntimeError):
@@ -86,7 +109,8 @@ async def start_simulator(
 
 class Proxy:
     """Per-request JSON-RPC handling. Holds the upstream client, the chain id
-    that was verified at startup, the audit log and the simulator."""
+    that was verified at startup, the audit log, the mandate store (opened
+    counters-only) and the simulator."""
 
     def __init__(
         self,
@@ -94,12 +118,14 @@ class Proxy:
         chain_id: int,
         settings: Settings,
         audit: AuditLog,
+        mandates: MandateStore,
         simulator: TransactionSimulator,
     ) -> None:
         self.upstream = upstream
         self.chain_id = chain_id
         self.settings = settings
         self.audit = audit
+        self.mandates = mandates
         self.simulator = simulator
 
     async def handle(self, obj: Any) -> dict[str, Any]:
@@ -155,6 +181,13 @@ class Proxy:
                 request.id, AuditRecord.for_transaction(tx, call, Decision.BLOCK, reason)
             )
 
+        mandate, reason = self._find_mandate(tx)
+        if mandate is None:
+            return self._block(
+                request.id, AuditRecord.for_transaction(tx, call, Decision.BLOCK, reason)
+            )
+        mid = mandate.id
+
         logger.info(
             "intercepted tx %s type=%d chain=%s from=%s to=%s value=%d nonce=%d call=%s%s",
             tx.hash,
@@ -167,12 +200,13 @@ class Proxy:
             call.kind,
             f" {call.signature}" if call.signature else "",
         )
+        logger.info("tx %s is covered by mandate %s", tx.hash, mid)
         try:
             effects = await self.simulator.simulate(tx)
         except SimulationError as exc:
             # Fail closed. The message is safe to return (see SimulationError).
             record = AuditRecord.for_transaction(
-                tx, call, Decision.BLOCK, str(exc), simulation_error=str(exc)
+                tx, call, Decision.BLOCK, str(exc), simulation_error=str(exc), mandate_id=mid
             )
             return self._block(request.id, record)
         except Exception:
@@ -180,7 +214,7 @@ class Proxy:
             logger.exception("simulator crashed on tx %s", tx.hash)
             reason = "simulation failed: internal error"
             record = AuditRecord.for_transaction(
-                tx, call, Decision.BLOCK, reason, simulation_error=reason
+                tx, call, Decision.BLOCK, reason, simulation_error=reason, mandate_id=mid
             )
             return self._block(request.id, record)
 
@@ -188,12 +222,46 @@ class Proxy:
             # At best it wastes gas. At worst it succeeds on chain because
             # state changed after we simulated, doing something we never saw.
             record = AuditRecord.for_transaction(
-                tx, call, Decision.BLOCK, "transaction reverts in simulation", effects=effects
+                tx,
+                call,
+                Decision.BLOCK,
+                "transaction reverts in simulation",
+                effects=effects,
+                mandate_id=mid,
             )
             return self._block(request.id, record)
 
+        # Charge the mandate. This is the check that counts: the lookup above
+        # ran before simulation, and the mandate may have been revoked, run out
+        # or expired since. record_transaction checks and increments in one
+        # SQLite transaction, so two transactions racing for the last slot
+        # can't both get it.
         try:
-            self.audit.write(AuditRecord.for_transaction(tx, call, Decision.ALLOW, effects=effects))
+            charged = self.mandates.record_transaction(mid)
+        except MandateNotActiveError as exc:
+            record = AuditRecord.for_transaction(
+                tx, call, Decision.BLOCK, str(exc), effects=effects, mandate_id=mid
+            )
+            return self._block(request.id, record)
+        except MandateStoreError as exc:
+            return self._block(
+                request.id, self._store_failure(tx, call, exc, effects=effects, mandate_id=mid)
+            )
+
+        # The counter is charged before the audit write, so if the write
+        # fails, a slot is spent on a transaction we then block. The other
+        # order is worse: an "allow" record for a transaction we couldn't
+        # charge. A lost slot fails closed (the agent can do less, not more).
+        record = AuditRecord.for_transaction(
+            tx,
+            call,
+            Decision.ALLOW,
+            effects=effects,
+            mandate_id=mid,
+            mandate_transaction=charged.transactions,
+        )
+        try:
+            self.audit.write(record)
         except AuditLogError as exc:
             # Fail closed: nothing reaches the chain without an audit record.
             logger.error("blocked transaction %s: %s", tx.hash, exc)
@@ -217,6 +285,47 @@ class Proxy:
         if tx.chain_id is not None and tx.chain_id != self.chain_id:
             return f"chain id {tx.chain_id} does not match upstream chain id {self.chain_id}"
         return None
+
+    def _find_mandate(self, tx: DecodedTransaction) -> tuple[StoredMandate | None, str]:
+        """The sender's active mandate, or None and the reason to block.
+
+        The key is (chain, sender). The sender is recovered from the
+        signature, so the agent can't claim to be someone else, and nothing
+        the agent sends can pick which mandate applies. The chain is the
+        upstream's: _check() has already made sure the transaction is for it.
+        """
+        try:
+            active = self.mandates.active_for(self.chain_id, tx.sender)
+            if active is not None:
+                return active, ""
+            latest = self.mandates.latest_for(self.chain_id, tx.sender)
+        except MandateStoreError as exc:
+            return None, self._store_failure_reason(tx, exc)
+        if latest is None:
+            return None, f"no mandate for sender {tx.sender} on chain {self.chain_id}"
+        if latest.status is MandateStatus.EXHAUSTED:
+            used = f"{latest.transactions} of {latest.mandate.limits.max_transactions}"
+            return None, f"mandate {latest.id} is exhausted ({used} transactions used)"
+        return None, f"mandate {latest.id} is {latest.status}"
+
+    def _store_failure_reason(self, tx: DecodedTransaction, exc: MandateStoreError) -> str:
+        # The details (which row, which check) go to the operator's log. The
+        # agent and the audit record get a fixed reason.
+        if isinstance(exc, MandateIntegrityError):
+            logger.error("mandate store integrity failure on tx %s: %s", tx.hash, exc)
+            return "mandate store integrity failure"
+        logger.error("mandate store error on tx %s: %s", tx.hash, exc)
+        return "mandate store unavailable"
+
+    def _store_failure(
+        self,
+        tx: DecodedTransaction,
+        call: DecodedCall,
+        exc: MandateStoreError,
+        **fields: Any,
+    ) -> AuditRecord:
+        reason = self._store_failure_reason(tx, exc)
+        return AuditRecord.for_transaction(tx, call, Decision.BLOCK, reason, **fields)
 
     def _block(self, request_id: Any, record: AuditRecord) -> dict[str, Any]:
         logger.warning("blocked transaction %s: %s", record.hash or "<undecodable>", record.reason)
@@ -244,6 +353,18 @@ def create_app(
             # unreachable upstream does: we never run without either.
             audit = AuditLog(settings.audit_log_path)
             stack.callback(audit.close)
+            # Then the mandate store: no store, no firewall. Counters-only, so
+            # the proxy can't create, change or revoke mandates. Every row is
+            # checked now, so a tampered store stops startup loudly instead of
+            # only blocking the one sender whose row was edited.
+            mandates = MandateStore(
+                settings.mandate_db_path,
+                counters_only=True,
+                busy_timeout=MANDATE_STORE_BUSY_TIMEOUT_SECONDS,
+            )
+            stack.callback(mandates.close)
+            stored = mandates.all()
+            active = sum(1 for m in stored if m.status is MandateStatus.ACTIVE)
             upstream = UpstreamClient(str(settings.upstream_rpc_url))
             stack.push_async_callback(upstream.aclose)
             try:
@@ -258,12 +379,18 @@ def create_app(
                 ) from None
             logger.info("upstream %s, chain id %d", upstream_name, chain_id)
             logger.info("audit log %s", settings.audit_log_path)
+            logger.info(
+                "mandate store %s: %d mandates, %d active",
+                settings.mandate_db_path,
+                len(stored),
+                active,
+            )
             try:
                 # Fail closed: no simulator, no firewall.
                 simulator = await stack.enter_async_context(start(settings, upstream, chain_id))
             except SimulatorStartupError as exc:
                 raise SimulatorStartupError(str(exc)) from None  # same reason as above
-            app.state.proxy = Proxy(upstream, chain_id, settings, audit, simulator)
+            app.state.proxy = Proxy(upstream, chain_id, settings, audit, mandates, simulator)
             yield
 
     # No /docs or /openapi.json: the only endpoint is POST /.

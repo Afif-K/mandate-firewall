@@ -394,3 +394,85 @@ def test_two_active_mandates_are_detected(path: Path, store: MandateStore) -> No
     )
     with pytest.raises(MandateIntegrityError, match="more than one"):
         store.active_for(84532, PRINCIPAL)
+
+
+# --- counters-only (the proxy's mode) -----------------------------------------------
+
+
+@pytest.fixture
+def proxy_view(path: Path, store: MandateStore, clock: Clock) -> MandateStore:
+    return MandateStore(path, counters_only=True, clock=clock)
+
+
+def test_counters_only_can_charge_and_exhaust(
+    store: MandateStore, proxy_view: MandateStore
+) -> None:
+    mid = store.add(mandate())  # max_transactions=3
+    assert [proxy_view.record_transaction(mid).transactions for _ in range(3)] == [1, 2, 3]
+    assert store.get(mid).status is MandateStatus.EXHAUSTED  # the event was written too
+    with pytest.raises(MandateNotActiveError):
+        proxy_view.record_transaction(mid)
+
+
+def test_counters_only_refuses_add_and_revoke(
+    store: MandateStore, proxy_view: MandateStore
+) -> None:
+    mid = store.add(mandate())
+    with pytest.raises(MandateStoreError, match="counters-only: add"):
+        proxy_view.add(other())
+    with pytest.raises(MandateStoreError, match="counters-only: revoke"):
+        proxy_view.revoke(mid)
+    assert store.get(mid).status is MandateStatus.ACTIVE
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "INSERT INTO mandates VALUES ('x', x'00', 1, 'p', 'c', 'e')",
+        "UPDATE events SET event = 'revoked'",
+        "DELETE FROM counters",
+        "DROP TRIGGER mandates_no_update",
+        "CREATE TABLE x (a)",
+        "PRAGMA user_version = 2",
+        "PRAGMA writable_schema = ON",
+        "ATTACH DATABASE ':memory:' AS other",
+    ],
+)
+def test_counters_only_connection_denies_other_writes(
+    store: MandateStore, proxy_view: MandateStore, sql: str
+) -> None:
+    # Not just the Python methods: the connection itself refuses, whatever
+    # SQL a proxy code path might run. One gap, by design: an INSERT into
+    # events is allowed (record_transaction writes "exhausted"), and the
+    # authorizer can't see the value, so "revoked" is refused only by
+    # revoke() in Python. Revoking can only make the agent do less.
+    store.add(mandate())
+    with pytest.raises(sqlite3.DatabaseError, match="not authorized"):
+        proxy_view._db.execute(sql)
+
+
+def test_counters_only_never_creates_or_initializes(path: Path) -> None:
+    with pytest.raises(MandateStoreError, match="does not exist"):
+        MandateStore(path, counters_only=True)
+    path.parent.mkdir()
+    path.touch()
+    with pytest.raises(MandateStoreError, match="not an initialized mandate store"):
+        MandateStore(path, counters_only=True)
+    assert path.stat().st_size == 0  # not even a WAL header was written
+    with pytest.raises(ValueError, match="can't create"):
+        MandateStore(path, create=True, counters_only=True)
+
+
+def test_latest_for_returns_the_newest_whatever_its_status(
+    store: MandateStore, clock: Clock
+) -> None:
+    assert store.latest_for(84532, PRINCIPAL) is None
+    first = store.add(mandate())
+    second = store.add(other(), replace=True)
+    latest = store.latest_for(84532, PRINCIPAL)
+    assert latest is not None and latest.id == second
+    clock.now = EXPIRES
+    latest = store.latest_for(84532, PRINCIPAL)
+    assert latest is not None and (latest.id, latest.status) == (second, MandateStatus.EXPIRED)
+    assert store.get(first).status is MandateStatus.REVOKED
+    assert store.latest_for(1, PRINCIPAL) is None

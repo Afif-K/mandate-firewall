@@ -1,7 +1,8 @@
 """Command-line entry point.
 
     mandate-firewall serve [--upstream URL] [--host H] [--port P]
-                           [--audit-log PATH] [--log-level LEVEL]
+                           [--audit-log PATH] [--mandate-db PATH]
+                           [--log-level LEVEL]
     mandate-firewall mandate new ["instruction"] | --send AMOUNT SYMBOL --to WHO
                                  | --swap AMOUNT SYMBOL --for SYMBOL --via VENUE
     mandate-firewall mandate show ID | list | revoke ID
@@ -65,6 +66,12 @@ def build_parser() -> argparse.ArgumentParser:
         dest="audit_log_path",
         metavar="PATH",
         help="JSONL audit log (env AUDIT_LOG_PATH)",
+    )
+    serve_parser.add_argument(
+        "--mandate-db",
+        dest="mandate_db_path",
+        metavar="PATH",
+        help="mandate store written by `mandate new` (env MANDATE_DB_PATH)",
     )
     serve_parser.add_argument(
         "--log-level",
@@ -152,7 +159,7 @@ def serve(args: argparse.Namespace) -> None:
         )
 
     # lifespan="on": if startup fails (upstream unreachable, audit log not
-    # writable), uvicorn exits with code 3 instead of serving. With "auto" it
+    # writable, mandate store missing), uvicorn exits with code 3 instead of serving. With "auto" it
     # may treat a lifespan error as "lifespan unsupported" and serve anyway.
     uvicorn.run(
         create_app(settings),

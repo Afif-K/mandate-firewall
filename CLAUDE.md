@@ -85,7 +85,7 @@ Env & deps: `uv sync`, then `uv run pytest`, `uv run ruff check .`.
 ## Roadmap
 - [x] M1: RPC proxy that intercepts `eth_sendRawTransaction`, decodes, logs, forwards
 - [x] M2: Anvil simulation producing structured effects (plan and decisions: docs/m2-plan.md)
-- [ ] M3: Mandate capture: user instruction -> locked, structured mandate
+- [x] M3: Mandate capture: user instruction -> locked, structured mandate
       (plan and decisions: docs/m3-plan.md)
 - [ ] M4: Verifier: the deterministic matcher decides; the LLM only writes the
       plain-English explanation, never allows or blocks. Human escalation for anomalies
@@ -103,7 +103,7 @@ Env & deps: `uv sync`, then `uv run pytest`, `uv run ruff check .`.
 - [ ] M9: User-wallet EIP-712 mandate signing: the user's own wallet signs the canonical
       mandate and the firewall checks the signer. (Placement before/after v0.1 is open.)
 
-**Current milestone: M3**
+**Current milestone: M4**
 
 ## How to work with me
 - I'm a CS/AI engineering student building this to learn deeply and to ship

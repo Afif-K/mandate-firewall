@@ -1,6 +1,6 @@
 # Threat model
 
-Status: **beta, Milestone 2.** This document describes what the code in this
+Status: **beta, Milestone 3.** This document describes what the code in this
 repository does today, not what the project plans to do. It is updated with
 every milestone. If you find a gap that isn't listed here, please open an issue.
 
@@ -13,19 +13,29 @@ that is under the limit and goes to an allowed contract. The goal of this
 project is to check each transaction against the user's own instruction, the
 *mandate*, and block anything that doesn't match.
 
-**Milestone 2 does not check mandates yet.** M1 built the choke point: a
-JSON-RPC proxy that sees every transaction the agent sends through it. M2 adds
-simulation. Every transaction is run on a private fork of the chain before
-it's forwarded, and what it actually did (its *effects*) is recorded. M2
-blocks a transaction only if it can't be simulated cleanly or if it reverts.
-Comparing effects with a mandate is M3 (capture) and M4 (verification).
+M1 built the choke point: a JSON-RPC proxy that sees every transaction the
+agent sends through it. M2 added simulation: every transaction is run on a
+private fork of the chain before it's forwarded, and what it actually did
+(its *effects*) is recorded. M3 adds mandates: the user locks an instruction
+with the capture CLI, and the proxy blocks every transaction from an account
+that has no confirmed, unexpired mandate with transactions left.
+
+**Milestone 3 does not compare a transaction with its mandate.** While an
+account has an active mandate, any transaction from it that simulates
+cleanly is forwarded, whatever it does, up to the mandate's transaction cap
+and until it expires. Checking effects against the mandate is M4. See
+"Effects aren't checked against the mandate" below.
 
 ## Actors and trust
 
 | Actor | Trusted? | Notes |
 |---|---|---|
-| User | Yes | Gives the instruction. Will confirm mandates (M3). |
+| User | Yes | Gives the instruction to the capture CLI directly and confirms the summary. Can still be wrong or tricked: see "Confirmation fatigue" and "Poisoned instructions". |
 | Operator / host machine | Yes | Runs the proxy, sets its config, owns the audit log. |
+| The firewall's OS user | Yes | Owns the mandate store (`0600` in a `0700` directory). **Whoever can run as this user can create mandates.** See "Same-host compromise". |
+| Capture LLM (optional) | **No** | Parses the instruction into a draft. Its output is checked like untrusted input: every value must appear in the user's words, and the user confirms the result. It never sees agent content and never decides on transactions. |
+| LLM provider | Partly | Receives the instruction text when the LLM path is used. Not involved in transaction decisions. |
+| Token and venue registry | Yes | Shipped per chain, or replaced by the operator (`REGISTRY_PATH`). Maps symbols to addresses. A wrong entry makes a wrong mandate. |
 | Agent | **No** | Assumed to be prompt-injected at any moment. It holds or controls its own signing key. |
 | Content the agent reads | **No** | The source of injections. |
 | Contracts the transaction touches | **No** | Including token contracts: their events, return values and revert messages are attacker-controlled. |
@@ -120,15 +130,175 @@ Each item has tests under `tests/`.
     directory that's deleted on exit, so a stale or tampered cache file can't
     feed a simulation.
 
+### Mandates (Milestone 3)
+
+16. **Transactions without a confirmed mandate.** Each transaction is
+    matched to a mandate by `(chain, sender)`. The sender is recovered from
+    the signature, so the agent can't claim another account, and nothing it
+    sends can choose which mandate applies (an account has at most one
+    active mandate). No mandate, or one that is expired, revoked or
+    exhausted: blocked (`-32003`) before simulation, and the audit record
+    names the mandate it found. There is no setting that turns the gate off.
+17. **More transactions than the user allowed.** Each mandate has a
+    transaction cap (`max_transactions`, default 3). After simulation the
+    proxy charges the transaction to the mandate, re-checking its status in
+    the same SQLite transaction (`BEGIN IMMEDIATE`). So two transactions
+    racing for the last slot can't both get it, and a mandate revoked,
+    expired or used up *during* simulation blocks. Blocked transactions
+    aren't charged. Every allowed transaction's audit record carries
+    `mandate_id` and its number under that mandate (`mandate_transaction`).
+18. **The agent writing its own mandate.** The user gives the instruction to
+    the firewall's capture CLI, not to the agent, so an agent that has read
+    poisoned content can't rewrite it. The agent's RPC has no mandate
+    methods under any name (default-deny, and a test checks that no
+    `mandate*`/`firewall*` name is ever allowlisted). The store is
+    reachable only by the firewall's OS user, and the agent must run as
+    another user or in another container. Confirmation requires a terminal
+    on both stdin and stdout, and the exact answer `yes`.
+19. **The proxy writing mandates.** The proxy opens the store
+    *counters-only*. Its `add` and `revoke` refuse, and an SQLite authorizer
+    on its connection denies every statement except reads and writes to the
+    counters (and the "exhausted" event). Inserting a mandate, `UPDATE`,
+    `DELETE`, `DROP TRIGGER`, `PRAGMA` and `ATTACH` are all refused, so a
+    bug in the proxy can't create or widen a mandate. The proxy refuses to
+    start if the store is missing or isn't an initialized store, and it never
+    creates or writes to such a file.
+20. **Edited mandate content.** A mandate's id is the sha256 of its
+    canonical JSON, stored with it. Every read re-checks the bytes against
+    the id and against the lookup columns (chain, principal, creation and
+    expiry times), so a mandate can't be pointed at another account or have
+    its expiry extended undetected. Content rows are append-only (SQLite
+    triggers). A row that fails its checks blocks the sender's transactions
+    with "mandate store integrity failure" (details only in the operator's
+    log), and at startup it stops the proxy.
+21. **The capture LLM inventing or swapping values.** The LLM produces a
+    draft, and a deterministic compiler turns it into a mandate or a
+    question. Every amount, address, symbol and venue name must appear as a
+    whole word in the user's own instruction. Addresses must carry their
+    exact EIP-55 checksum. Symbols and venues resolve only through the
+    registry. Missing or ambiguous values become questions, never guesses.
+    Recurring wording ("every week", "DCA") is refused, because only
+    one-shot mandates exist. The confirmation summary shows full addresses
+    (a shortened address is what address-poisoning attacks rely on) and
+    registry names. Attacker-controlled strings are sanitized before
+    printing.
+22. **Leaking the LLM API key.** Only the capture CLI reads `LLM_API_KEY`,
+    from the environment or `.env`, never from a flag. The proxy process
+    never holds it, and tests check that building the proxy loads none of the
+    capture code. The key goes into one HTTP header. Errors carry only an
+    error type, never the API's message or the key.
+
 ## What it does NOT protect against
 
-### Off-mandate transactions (still the main gap)
-An injected "send all USDC to the attacker" transaction that is well-formed,
-for the right chain, and simulates successfully is **forwarded**. M2 records
-exactly what it does, but nothing compares that with what the user asked for.
-Mandate capture (M3) and verification (M4) close this gap. Until then, the
-firewall is a strict, simulating, auditing proxy, not a firewall against
-injected intent.
+### Effects aren't checked against the mandate (still the main gap)
+**M3 checks that a mandate exists, not that the transaction matches it.**
+Suppose the user locks "send 0.01 ETH to Bob, at most 2 transactions". An
+injected agent then sends 0.01 ETH to the attacker instead. That transaction
+is well-formed, for the right chain, simulates cleanly, and comes from an
+account with an active mandate, so it is **forwarded** and charged as the
+mandate's next transaction. The audit record shows exactly where the ETH
+went, but nothing compared it with the mandate. The same holds for any
+token, amount, recipient, approval or contract call. M3 narrows the window:
+a confirmed mandate must exist, be unexpired (30 minutes by default, 24
+hours at most) and have transactions left. It doesn't close it.
+Verification (M4) closes it: the deterministic matcher compares effects
+with the mandate's budgets, recipients and venues. `scripts/demo_m3.sh`
+shows this gap on purpose (step 6).
+
+### Confirmation fatigue and misreads
+The user confirms a summary, and people confirm without reading,
+especially when asked often. A mistyped amount or a look-alike address in
+the instruction is grounded (it does appear in the user's words), so the
+compiler accepts it, and the summary shows it faithfully. Full addresses,
+registry names and a warning when a swap has no minimum help. They don't
+make a person read. Grounding has one more limit: it proves a value appears
+in the instruction, not that it's attached to the right thing. In "send 5
+USDC to 0xB0b…, not 500", an extracted 500 is grounded. Again only the
+confirmation catches it. Standing mandates (M5) are meant to make
+confirmations rarer, and so more likely to be read.
+
+### Poisoned instructions
+A mandate captures the user's intent; it doesn't judge it. If the user
+pastes an address copied from a scam page, or a "recipient" an attacker
+supplied by email, the mandate faithfully authorizes paying the scammer, and
+M4 will faithfully enforce it. The trusted/untrusted split protects the
+instruction from the agent. It can't protect the user from what they read
+before writing it.
+
+### Authorized but badly executed
+An injected agent can still do what the mandate allows, badly: swap at a
+terrible price, pay in several pieces, or use up the transaction cap on
+transactions that fail on chain. Swap minimums (`min_buy_per_sell`) will
+bound price once M4 checks them. A swap mandate without a stated minimum is
+flagged at confirmation, not bounded.
+
+### Same-host compromise
+OS file permissions are the only authentication for mandates in M3. There
+is no signing.
+- **Anyone who can run as the firewall's OS user can create mandates**,
+  directly with the CLI or by writing the store. The agent must run as a
+  different user or in a different container (this was already needed
+  against bypassing the proxy and tampering with the simulation node).
+- **The store isn't tamper-evident against that user.** Content can't be
+  changed undetected, because of the hash. But whoever can write the file
+  can drop the triggers and delete a "revoked" event, an "exhausted" event or
+  a counter row, which revives a mandate or resets its count. Nothing
+  detects that.
+- The store's protections apply only to connections that don't opt out. The
+  counters-only authorizer guards the *proxy's* connection, not the file:
+  any other program opening the file directly has full access.
+- The capture CLI's terminal check stops a scripted `yes` from a pipe. It
+  isn't a boundary: a process running as the firewall user can open a
+  pseudo-terminal, or write the store directly.
+
+User-wallet EIP-712 signing of mandates (M9) is the fix that adds real
+protection: the firewall would accept only mandates signed by a configured
+owner key that isn't on this host.
+
+### The authorizer is value-blind
+SQLite's authorizer sees which table a statement writes to, not the values.
+The proxy must insert "exhausted" events, so its connection is allowed to
+insert into `events`, and the authorizer can't tell that from inserting a
+"revoked" event. Only the proxy's Python code refuses revoking. That gap can
+only ever make the agent do less. In the other direction, the authorizer
+can't stop the proxy from *raising* a counter, which also only blocks more.
+
+### Charged slots that weren't used
+The mandate is charged before the audit record is written, so if the write
+fails, the transaction is blocked but its slot is spent (the reverse order
+could record "allow" for a transaction that couldn't be charged). A
+transaction the node then rejects ("nonce too low") is also charged, as it
+is audited as allowed. Both fail closed: the agent can do less, not more.
+
+### Only one-shot mandates
+Mandates last at most 24 hours and can't renew. Recurring instructions are
+refused. An agent that needs standing authority has to wait for M5.
+Meanwhile, users who create long, high-cap mandates to avoid repeated
+confirmations widen the window above.
+
+### The registry is trusted
+Symbols and venue names resolve through a per-chain registry, shipped with
+the package or replaced by the operator. Its addresses were checked by hand
+against issuer documentation and on chain, but nothing re-verifies them at
+run time. A wrong or malicious entry produces a mandate for the wrong
+contract, and the user's summary shows the registry's name for it.
+Uniswap on Base Sepolia is SwapRouter02 only. UniversalRouter and Permit2
+flows aren't supported yet (Permit2 approvals are off-chain or use events
+M2 doesn't decode).
+
+### Wall-clock expiry
+Expiry is checked against the proxy's clock when the transaction arrives. A
+transaction forwarded a second before expiry may be mined after it. A wrong
+system clock makes mandates expire early or late. Nothing checks the clock.
+
+### The instruction goes to the LLM provider
+With the LLM path (`mandate new "…"`), the instruction text, including
+amounts and addresses, is sent to the configured provider
+(api.anthropic.com by default). The CLI says so before sending it. The
+structured path (`--send`/`--swap`) uses no LLM. The capture code calls the
+API over plain HTTP (`httpx`), not the vendor SDK, because the SDK and its
+new HTTP stack had no verifiable build provenance when checked
+(docs/m3-plan.md §5). In exchange, we must track API changes ourselves.
 
 ### Off-chain signatures
 A lot of value moves without the victim sending any transaction: Permit2 and
@@ -137,9 +307,10 @@ injected agent can sign a Permit2 approval and hand the signature to an
 attacker, who spends it from their own account. **The firewall never sees
 this.** It inspects only `eth_sendRawTransaction`, and the signing methods
 (`eth_signTypedData*`) are denied on the proxy but performed by the agent's
-own key. This is the most common drainer pattern today. A pre-sign /
-typed-data inspection milestone (Permit2 and EIP-2612 at minimum) is on the
-roadmap before v0.1.
+own key. This is the most common drainer pattern today. **A mandate doesn't help:**
+the signature is never a transaction, so it is never matched to one. A
+pre-sign / typed-data inspection milestone (M7: Permit2 and EIP-2612 at
+minimum) is on the roadmap before v0.1.
 
 ### Simulation can differ from what happens on chain
 - **State changes between simulation and inclusion.** The transaction is
@@ -183,7 +354,8 @@ roadmap before v0.1.
 
 ### Multi-transaction flows
 Each transaction is simulated on its own, against the upstream's latest
-block. A transaction with nonce n+1 sent before nonce n is mined fails in
+block. (A mandate covers a sequence, such as approve then swap, through its
+transaction cap. The simulation still doesn't.) A transaction with nonce n+1 sent before nonce n is mined fails in
 simulation and is **blocked**. That's fail-closed but inconvenient: "approve
 then swap" works only if the agent waits for the approve to be mined. Whether
 a quick follow-up passes depends on timing. Simulating "approve" alone also
@@ -261,6 +433,10 @@ re-points its own hostname at `127.0.0.1`) isn't defended against, because the
   That's fail-closed, but it's also a denial of service.
 - One proxy process per file. Two processes appending to the same file may
   interleave records.
+- Blocked records name the mandate they were checked against whenever one
+  was identified. They don't copy its content: look the id up with
+  `mandate-firewall mandate show <id>`. If the store is lost, the ids in the
+  log can no longer be resolved.
 
 ### Availability
 Simulation adds latency (tens of milliseconds against a local node, more
@@ -270,7 +446,10 @@ can't be restarted, **every transaction is blocked**. Transactions are
 simulated one at a time. A transaction that touches thousands of addresses
 can run into the timeout and be blocked (token checks are capped up front;
 ETH balance reads aren't). If the proxy is killed with `SIGKILL`, its anvil
-child keeps running until it's killed by hand.
+child keeps running until it's killed by hand. Without its mandate store the
+proxy doesn't start. While `mandate new` or `revoke` holds the store's write
+lock for more than a second, transactions are blocked. Mandate store calls
+are synchronous, so they briefly stall the proxy's event loop.
 
 ### No rate limiting
 A flood of requests, or expensive reads such as wide `eth_getLogs` ranges,

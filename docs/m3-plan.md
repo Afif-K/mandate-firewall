@@ -1,6 +1,6 @@
 # M3 plan: mandate capture
 
-Status: **approved 2026-10-09**. Commit 0 (this document) done.
+Status: **approved 2026-10-09; commits 0–8 done (2026-11-06).**
 
 ## Decisions (agreed 2026-10-09)
 
@@ -437,6 +437,10 @@ Where M9 sits (before or after v0.1) is open (confirmed 2026-10-09: stays M9 for
    - *Tests:* the unit `client` fixture and the integration `start_proxy` seed a broad mandate for the test sender, so M1/M2 tests run unchanged. `scripts/demo_m2.sh` now says to create a mandate first. 11 mutations (gate off, no charge, not counters-only, no startup scan, audit before charge, integrity detail leaked, no authorizer, authorizer allowing DELETE, schema check after PRAGMA, `add` allowed counters-only, wrong key) each fail a test.
 8. **Docs and demo:** THREAT_MODEL.md (§7), README (capture quickstart, privacy note), CLAUDE.md (mark M3 done; the §8 roadmap is already in), `scripts/demo_m3.sh`.
    *Verify:* read-through; full `uv run pytest`; `uv run ruff check .`.
+   **Done.** How it differs:
+   - *THREAT_MODEL.md* covers all of §7, plus what commits 3–7 found: the store isn't tamper-evident against the firewall's own OS user (status and counters, not content), the authorizer is value-blind, charged-but-unused slots (failed audit write, upstream rejection), the grounding limit ("not 500"), and the terminal check not being a boundary. New protections are items 16–22. The actors table adds the firewall's OS user, the capture LLM, the LLM provider and the registry.
+   - *`scripts/demo_m3.sh` is self-contained*, unlike `demo_m2.sh`: it starts its own anvil and firewall on spare ports (18545/18546) with the store and audit log in a temporary directory, and deletes everything on exit. The store must exist before the firewall starts, so a demo that relies on a firewall you started yourself would need a mandate created first anyway. It uses the structured path, so no API key is needed. Step 6 shows the M4 gap on purpose: an off-mandate transfer is allowed and charged. It was run end to end through a pseudo-terminal before committing. That run found a cleanup bug (`wait` returning 143 under `set -e` ended the trap before the temp directory was deleted).
+   - *README:* the quickstart now creates a mandate before starting the firewall (step 2), with the structured and LLM paths, the privacy note, `list`/`show`/`revoke`, and a second config table for the capture settings.
 
 Each commit: `uv run ruff check .` plus `uv run pytest` (with `-m anvil` for integration tests), no Co-Authored-By trailer.
 

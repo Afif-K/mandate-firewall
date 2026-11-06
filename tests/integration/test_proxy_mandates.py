@@ -133,7 +133,8 @@ def test_expired_mandate_is_blocked(proxy: Proxy, anvil: Service, mandate_db: Pa
         at=created + timedelta(minutes=1),
     )
     raw = sign(proxy.url, "erin")
-    assert_blocked_and_never_mined(proxy, anvil, raw, f"mandate {mid} is expired")
+    record = assert_blocked_and_never_mined(proxy, anvil, raw, f"mandate {mid} is expired")
+    assert record["mandate_id"] == mid
 
 
 def test_transaction_cap_is_enforced(proxy: Proxy, anvil: Service, mandate_db: Path) -> None:
@@ -146,7 +147,8 @@ def test_transaction_cap_is_enforced(proxy: Proxy, anvil: Service, mandate_db: P
         assert record_for(proxy, tx_hash(raw))["mandate_transaction"] == n
     raw = sign(proxy.url, "frank")
     reason = f"mandate {mid} is exhausted (2 of 2 transactions used)"
-    assert_blocked_and_never_mined(proxy, anvil, raw, reason)
+    record = assert_blocked_and_never_mined(proxy, anvil, raw, reason)
+    assert (record["mandate_id"], record["mandate_transaction"]) == (mid, None)
 
 
 def test_tampered_store_row_is_blocked(proxy: Proxy, anvil: Service, mandate_db: Path) -> None:

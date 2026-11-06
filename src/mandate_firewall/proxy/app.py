@@ -182,10 +182,17 @@ class Proxy:
             )
 
         mandate, reason = self._find_mandate(tx)
-        if mandate is None:
-            return self._block(
-                request.id, AuditRecord.for_transaction(tx, call, Decision.BLOCK, reason)
+        if reason is not None or mandate is None:
+            # Name the mandate in the record whenever one was identified
+            # (expired, revoked, exhausted), not only when it was charged.
+            record = AuditRecord.for_transaction(
+                tx,
+                call,
+                Decision.BLOCK,
+                reason or "no active mandate",
+                mandate_id=mandate.id if mandate else None,
             )
+            return self._block(request.id, record)
         mid = mandate.id
 
         logger.info(
@@ -286,8 +293,11 @@ class Proxy:
             return f"chain id {tx.chain_id} does not match upstream chain id {self.chain_id}"
         return None
 
-    def _find_mandate(self, tx: DecodedTransaction) -> tuple[StoredMandate | None, str]:
-        """The sender's active mandate, or None and the reason to block.
+    def _find_mandate(self, tx: DecodedTransaction) -> tuple[StoredMandate | None, str | None]:
+        """(mandate, reason to block). An active mandate comes with no reason.
+        Otherwise the reason is set, and the mandate is the sender's latest
+        one if there is any (to name it in the audit record), else None.
+        After a store or integrity error it is None: nothing read is trusted.
 
         The key is (chain, sender). The sender is recovered from the
         signature, so the agent can't claim to be someone else, and nothing
@@ -297,7 +307,7 @@ class Proxy:
         try:
             active = self.mandates.active_for(self.chain_id, tx.sender)
             if active is not None:
-                return active, ""
+                return active, None
             latest = self.mandates.latest_for(self.chain_id, tx.sender)
         except MandateStoreError as exc:
             return None, self._store_failure_reason(tx, exc)
@@ -305,8 +315,8 @@ class Proxy:
             return None, f"no mandate for sender {tx.sender} on chain {self.chain_id}"
         if latest.status is MandateStatus.EXHAUSTED:
             used = f"{latest.transactions} of {latest.mandate.limits.max_transactions}"
-            return None, f"mandate {latest.id} is exhausted ({used} transactions used)"
-        return None, f"mandate {latest.id} is {latest.status}"
+            return latest, f"mandate {latest.id} is exhausted ({used} transactions used)"
+        return latest, f"mandate {latest.id} is {latest.status}"
 
     def _store_failure_reason(self, tx: DecodedTransaction, exc: MandateStoreError) -> str:
         # The details (which row, which check) go to the operator's log. The

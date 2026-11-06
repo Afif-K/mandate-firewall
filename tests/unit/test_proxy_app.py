@@ -803,7 +803,7 @@ def test_expired_mandate_is_blocked(
     )
     body = send(client, sign_as(OTHER_KEY))
     record = assert_blocked(body, node, simulator, f"mandate {mid} is expired")
-    assert record["mandate_id"] is None  # nothing was charged to it
+    assert record["mandate_id"] == mid  # identified, though not charged
 
 
 def test_revoked_mandate_is_blocked(
@@ -811,7 +811,8 @@ def test_revoked_mandate_is_blocked(
 ) -> None:
     assert writer().revoke(mandate_id)  # while the proxy is running
     body = send(client, sign())
-    assert_blocked(body, node, simulator, f"mandate {mandate_id} is revoked")
+    record = assert_blocked(body, node, simulator, f"mandate {mandate_id} is revoked")
+    assert record["mandate_id"] == mandate_id
 
 
 def test_transaction_cap_is_enforced(
@@ -830,7 +831,9 @@ def test_transaction_cap_is_enforced(
     reason = f"mandate {mid} is exhausted (2 of 2 transactions used)"
     assert body["error"]["message"] == f"transaction rejected: {reason}"
     assert node.calls == [] and simulator.txs == []
-    assert audit_records()[-1]["reason"] == reason
+    blocked = audit_records()[-1]
+    assert (blocked["reason"], blocked["mandate_id"]) == (reason, mid)
+    assert blocked["mandate_transaction"] is None  # blocked: never charged
 
 
 def test_blocked_transactions_are_not_charged(
@@ -888,7 +891,8 @@ def test_tampered_store_row_is_blocked(
     tamper_expiry(MANDATE_DB)  # after startup, so the startup scan can't catch it
     with caplog.at_level(logging.ERROR, logger="mandate_firewall"):
         body = send(client, sign())
-    assert_blocked(body, node, simulator, "mandate store integrity failure")
+    record = assert_blocked(body, node, simulator, "mandate store integrity failure")
+    assert record["mandate_id"] is None  # nothing read from a tampered store is trusted
     assert "lookup columns do not match content" in caplog.text  # details: operator only
 
 

@@ -27,6 +27,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from mandate_firewall.decode.transaction import MAX_RAW_TX_BYTES
 from mandate_firewall.models import BigInt, Decision, DecodedCall, DecodedTransaction, Effects
+from mandate_firewall.verify.models import Verdict
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,9 @@ class AuditRecord(BaseModel):
     # before simulation, or if simulation failed (then see simulation_error).
     effects: Effects | None = None
     simulation_error: str | None = None
+    # How the effects compare with the mandate (M4). None if the transaction
+    # was blocked before it could be verified (no mandate, no effects).
+    verdict: Verdict | None = None
     raw: str
     raw_truncated: bool = False
 
@@ -85,6 +89,7 @@ class AuditRecord(BaseModel):
         *,
         effects: Effects | None = None,
         simulation_error: str | None = None,
+        verdict: Verdict | None = None,
         mandate_id: str | None = None,
         mandate_transaction: int | None = None,
     ) -> "AuditRecord":
@@ -95,6 +100,7 @@ class AuditRecord(BaseModel):
             mandate_transaction=mandate_transaction,
             effects=effects,
             simulation_error=simulation_error,
+            verdict=verdict,
             hash=tx.hash,
             tx_type=int(tx.tx_type),
             chain_id=tx.chain_id,

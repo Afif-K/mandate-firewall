@@ -133,10 +133,14 @@ class DecodedCall(BaseModel):
 
 
 class Decision(StrEnum):
-    """What the firewall does with a transaction. M4 adds "escalate"."""
+    """What the firewall does with a transaction."""
 
     ALLOW = "allow"  # forward to the upstream node
     BLOCK = "block"  # refuse; the node never sees it
+    # Refuse too, and alert a human: the firewall couldn't fully interpret
+    # what the transaction does. Never "hold for approval": the human acts on
+    # the mandate, not on this transaction (docs/m4-plan.md §3).
+    ESCALATE = "escalate"
 
 
 # --- Simulated effects (M2) -------------------------------------------------

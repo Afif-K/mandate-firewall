@@ -20,6 +20,7 @@ from mandate_firewall.models import (
     TokenStateCheck,
     TokenTransfer,
 )
+from tests.schema import free_string_paths
 
 SENDER = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
 BOB = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
@@ -192,25 +193,7 @@ def test_no_field_can_hold_free_text() -> None:
     ride along in effects to the verifier. Every string anywhere in the schema
     is either pattern-constrained (hex, address) or an enum."""
     schema = Effects.model_json_schema()
-
-    def free_strings(node: Any, path: str) -> list[str]:
-        found: list[str] = []
-        if isinstance(node, dict):
-            if (
-                node.get("type") == "string"
-                and "pattern" not in node
-                and "enum" not in node
-                and "const" not in node
-            ):
-                found.append(path)
-            for key, child in node.items():
-                found += free_strings(child, f"{path}/{key}")
-        elif isinstance(node, list):
-            for i, child in enumerate(node):
-                found += free_strings(child, f"{path}/{i}")
-        return found
-
-    assert free_strings(schema, "#") == []
+    assert free_string_paths(schema) == []
     # And the check above does see strings: the schema has plenty.
     assert '"pattern"' in json.dumps(schema)
 

@@ -11,8 +11,10 @@ import pytest
 
 from mandate_firewall.mandate import store as store_module
 from mandate_firewall.mandate.canonical import canonical_json, mandate_id
-from mandate_firewall.mandate.models import Mandate
+from mandate_firewall.mandate.models import Budget, Limits, Mandate
 from mandate_firewall.mandate.store import (
+    AlreadyChargedError,
+    BudgetExceededError,
     MandateConflictError,
     MandateIntegrityError,
     MandateNotActiveError,
@@ -20,9 +22,10 @@ from mandate_firewall.mandate.store import (
     MandateStore,
     MandateStoreError,
 )
-from tests.unit.test_mandate_models import BOB, CREATED, PRINCIPAL, mandate
+from tests.unit.test_mandate_models import BOB, CREATED, PRINCIPAL, mandate, swap, transfer
 
 EXPIRES = CREATED + timedelta(minutes=30)
+TX = "0x" + "aa" * 32  # a transaction hash
 
 
 class Clock:
@@ -64,7 +67,7 @@ def raw(path: Path) -> sqlite3.Connection:
 def test_create_sets_private_modes(path: Path, store: MandateStore) -> None:
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
-    assert raw(path).execute("PRAGMA user_version").fetchone()[0] == 1
+    assert raw(path).execute("PRAGMA user_version").fetchone()[0] == 2
 
 
 def test_open_without_create_requires_the_file(path: Path) -> None:
@@ -84,8 +87,8 @@ def test_reopen_keeps_everything(path: Path, store: MandateStore, clock: Clock) 
 
 def test_unknown_schema_version(path: Path, store: MandateStore) -> None:
     store.close()
-    raw(path).execute("PRAGMA user_version = 2")
-    with pytest.raises(MandateStoreError, match="schema version 2"):
+    raw(path).execute("PRAGMA user_version = 3")
+    with pytest.raises(MandateStoreError, match="schema version 3"):
         MandateStore(path)
 
 
@@ -308,20 +311,28 @@ def test_sqlite_errors_during_a_write_become_store_errors(path: Path, store: Man
         "DELETE FROM events",
         "UPDATE counters SET transactions = 0",
         "DELETE FROM counters",
+        "UPDATE spending SET spent = zeroblob(32)",
+        "UPDATE spending SET intent_index = 1",
+        "DELETE FROM spending",
+        "UPDATE charged SET mandate_id = 'x'",
+        "DELETE FROM charged",
     ],
 )
 def test_triggers_refuse_edits(path: Path, store: MandateStore, sql: str) -> None:
     mid = store.add(mandate())
-    store.record_transaction(mid)
+    store.record_transaction(mid, charges={0: 5}, tx_hash=TX)
     store.revoke(mid)
-    with pytest.raises(sqlite3.IntegrityError, match="append-only|only go up|never deleted"):
+    with pytest.raises(
+        sqlite3.IntegrityError, match="append-only|only go up|never deleted|goes up|is never"
+    ):
         raw(path).execute(sql)
 
 
 def test_store_code_never_edits_content() -> None:
     source = Path(store_module.__file__).read_text()
-    code = source.replace(store_module._SCHEMA, "")  # the triggers name these on purpose
-    assert not re.search(r"\bUPDATE\s+(mandates|events)\b", code, re.IGNORECASE)
+    code = source.replace(store_module._SCHEMA, "").replace(store_module._SCHEMA_V2, "")
+    # (the triggers name these on purpose)
+    assert not re.search(r"\bUPDATE\s+(mandates|events|charged)\b", code, re.IGNORECASE)
     assert not re.search(r"\bDELETE\s+FROM\b", code, re.IGNORECASE)
 
 
@@ -431,7 +442,11 @@ def test_counters_only_refuses_add_and_revoke(
         "INSERT INTO mandates VALUES ('x', x'00', 1, 'p', 'c', 'e')",
         "UPDATE events SET event = 'revoked'",
         "DELETE FROM counters",
+        "DELETE FROM spending",
+        "DELETE FROM charged",
+        "UPDATE charged SET at = 'x'",
         "DROP TRIGGER mandates_no_update",
+        "DROP TRIGGER spending_only_up",
         "CREATE TABLE x (a)",
         "PRAGMA user_version = 2",
         "PRAGMA writable_schema = ON",
@@ -476,3 +491,321 @@ def test_latest_for_returns_the_newest_whatever_its_status(
     assert latest is not None and (latest.id, latest.status) == (second, MandateStatus.EXPIRED)
     assert store.get(first).status is MandateStatus.REVOKED
     assert store.latest_for(1, PRINCIPAL) is None
+
+
+# --- the spending ledger (M4, schema version 2) ---------------------------------------
+#
+# mandate() sends at most 50 USDC (50_000_000 base units) to Bob; swap() sells
+# at most 100 USDC. Intent indexes are positions in `intents`.
+
+USDC_50 = 50_000_000
+
+
+def two_intents() -> Mandate:
+    return mandate(intents=(transfer(), swap()))
+
+
+def test_charges_accumulate_per_intent(path: Path, store: MandateStore, clock: Clock) -> None:
+    mid = store.add(two_intents())
+    assert store.get(mid).spent == (0, 0)
+    store.record_transaction(mid, charges={0: 10_000_000})
+    stored = store.record_transaction(mid, charges={0: 5_000_000, 1: 40_000_000})
+    assert (stored.spent, stored.transactions) == ((15_000_000, 40_000_000), 2)
+    store.close()
+    assert MandateStore(path, clock=clock).get(mid).spent == (15_000_000, 40_000_000)
+
+
+def test_a_transaction_without_charges_spends_nothing(store: MandateStore) -> None:
+    mid = store.add(mandate())
+    stored = store.record_transaction(mid)  # e.g. an approval, or the M3 proxy
+    assert (stored.spent, stored.transactions) == ((0,), 1)
+
+
+def test_spending_the_whole_budget_exhausts_the_mandate(store: MandateStore) -> None:
+    mid = store.add(mandate())  # 3 transactions allowed, 50 USDC
+    last = store.record_transaction(mid, charges={0: USDC_50})
+    assert (last.status, last.transactions, last.spent) == (MandateStatus.EXHAUSTED, 1, (USDC_50,))
+    with pytest.raises(MandateNotActiveError, match="exhausted"):
+        store.record_transaction(mid)
+
+
+def test_exhausted_only_when_every_budget_is_spent(store: MandateStore) -> None:
+    mid = store.add(two_intents())
+    after_one = store.record_transaction(mid, charges={0: USDC_50})
+    assert after_one.status is MandateStatus.ACTIVE  # the swap budget is untouched
+    after_both = store.record_transaction(mid, charges={1: 100_000_000})
+    assert after_both.status is MandateStatus.EXHAUSTED
+
+
+def assert_nothing_written(store: MandateStore, mid: str, before: object) -> None:
+    after = store.get(mid)
+    assert (after.spent, after.transactions, after.status) == before
+    assert store.charged_to(TX) is None
+
+
+def test_over_budget_is_refused_and_writes_nothing(store: MandateStore) -> None:
+    mid = store.add(mandate())
+    store.record_transaction(mid, charges={0: 30_000_000})
+    before = (store.get(mid).spent, 1, MandateStatus.ACTIVE)
+    with pytest.raises(BudgetExceededError, match="intent 1 has too little budget left"):
+        store.record_transaction(mid, charges={0: 20_000_001}, tx_hash=TX)
+    assert_nothing_written(store, mid, before)
+    # Exactly what's left is fine.
+    assert store.record_transaction(mid, charges={0: 20_000_000}).spent == (USDC_50,)
+
+
+def test_the_recheck_is_what_counts(path: Path, store: MandateStore, clock: Clock) -> None:
+    """Two transactions verified against the same "30 of 50 spent": 15 each
+    fits on its own, together they don't. The second charge must be refused,
+    even from another connection (the CLI and the proxy are separate
+    processes). If the first spent the budget exactly, the mandate would be
+    exhausted and the second refused for that instead."""
+    mid = store.add(mandate())
+    store.record_transaction(mid, charges={0: 30_000_000})
+    proxy = MandateStore(path, clock=clock)
+    store.record_transaction(mid, charges={0: 15_000_000})
+    with pytest.raises(BudgetExceededError):
+        proxy.record_transaction(mid, charges={0: 15_000_000})
+    assert store.get(mid).spent == (45_000_000,)
+
+
+def test_budget_check_and_charge_hold_the_write_lock(
+    path: Path, store: MandateStore, clock: Clock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Like the transaction-cap race test: a rival charges the same budget
+    between our read of it and our write. It must wait for our lock."""
+    mid = store.add(mandate(limits=Limits(max_transactions=10, period=None)))
+    store.record_transaction(mid, charges={0: 30_000_000})
+    rival = MandateStore(path, clock=clock, busy_timeout=0.1)
+    outcome: list[str] = []
+    real_load = MandateStore._load
+
+    def load_then_rival(self: MandateStore, *args: object) -> object:
+        result = real_load(self, *args)  # type: ignore[arg-type]
+        if self is store and not outcome:
+            try:
+                rival.record_transaction(mid, charges={0: 20_000_000})
+                outcome.append("rival charged")
+            except MandateStoreError as exc:
+                outcome.append(f"rival refused: {exc}")
+        return result
+
+    monkeypatch.setattr(MandateStore, "_load", load_then_rival)
+    ours = store.record_transaction(mid, charges={0: 20_000_000})
+    assert outcome[0].startswith("rival refused: mandate store is unavailable")
+    assert ours.spent == (USDC_50,)
+
+
+def test_approval_limits_fit_what_is_left_after_the_charges(store: MandateStore) -> None:
+    mid = store.add(two_intents())  # the swap sells at most 100 USDC
+    store.record_transaction(mid, charges={1: 40_000_000})
+    before = (store.get(mid).spent, 1, MandateStatus.ACTIVE)
+    with pytest.raises(BudgetExceededError, match="intent 2 .* for the approval"):
+        store.record_transaction(mid, charges={1: 10_000_000}, approval_limits={1: 50_000_001})
+    assert_nothing_written(store, mid, before)
+    ok = store.record_transaction(mid, charges={1: 10_000_000}, approval_limits={1: 50_000_000})
+    assert ok.spent == (0, 50_000_000)  # an approval spends nothing
+
+
+def test_refusals_never_carry_amounts(store: MandateStore) -> None:
+    # The proxy returns these messages to the agent (Decision 6).
+    mid = store.add(two_intents())
+    messages = []
+    for kwargs in ({"charges": {0: USDC_50 + 1}}, {"approval_limits": {1: 100_000_001}}):
+        with pytest.raises(BudgetExceededError) as caught:
+            store.record_transaction(mid, **kwargs)  # type: ignore[arg-type]
+        messages.append(str(caught.value).replace(mid, ""))
+    for message in messages:
+        assert re.findall(r"\d+", message) in (["1"], ["2"])  # only the intent number
+
+
+def test_a_transaction_is_charged_once(store: MandateStore) -> None:
+    mid = store.add(mandate())
+    store.record_transaction(mid, charges={0: 1}, tx_hash=TX.upper().replace("0X", "0x"))
+    assert store.charged_to(TX) == mid  # stored lowercase, found either way
+    assert store.charged_to(TX.upper().replace("0X", "0x")) == mid
+    with pytest.raises(AlreadyChargedError, match="already charged"):
+        store.record_transaction(mid, charges={0: 1}, tx_hash=TX)
+    stored = store.get(mid)
+    assert (stored.spent, stored.transactions) == ((1,), 1)
+    assert store.charged_to("0x" + "bb" * 32) is None
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"charges": {1: 1}},  # no intent 1
+        {"charges": {-1: 1}},
+        {"charges": {True: 1}},
+        {"charges": {0: 0}},
+        {"charges": {0: -1}},
+        {"charges": {0: True}},
+        {"charges": {0: 2**256}},
+        {"approval_limits": {3: 1}},
+        {"approval_limits": {0: 0}},
+        {"tx_hash": "0x1234"},
+        {"tx_hash": TX + "\n"},
+    ],
+)
+def test_malformed_charges_are_refused(store: MandateStore, kwargs: dict[str, object]) -> None:
+    mid = store.add(mandate())
+    with pytest.raises(ValueError):
+        store.record_transaction(mid, **kwargs)  # type: ignore[arg-type]
+    assert (store.get(mid).spent, store.get(mid).transactions) == ((0,), 0)
+
+
+# uint256 as 32-byte big-endian BLOBs: SQLite's memcmp order is numeric order.
+BOUNDARIES = [(0, 1), (2**63 - 1, 2**63), (2**64 - 1, 2**64), (2**255 - 1, 2**255), (255, 256)]
+
+
+@pytest.mark.parametrize(("low", "high"), BOUNDARIES)
+def test_blob_order_is_numeric_order(low: int, high: int) -> None:
+    db = sqlite3.connect(":memory:")
+    lo, hi = store_module._to_blob(low), store_module._to_blob(high)
+    assert db.execute("SELECT ? < ?, ? < ?", (lo, hi, hi, lo)).fetchone() == (1, 0)
+    assert store_module._from_blob(hi) == high
+
+
+@pytest.mark.parametrize(("low", "high"), BOUNDARIES)
+def test_spending_trigger_compares_numerically(
+    path: Path, store: MandateStore, low: int, high: int
+) -> None:
+    big = mandate(intents=(transfer(budget=Budget(max=2**256 - 2, period=None)),))
+    mid = store.add(big)
+    store.record_transaction(mid, charges={0: high} if high else {})
+    db = raw(path)
+    with pytest.raises(sqlite3.IntegrityError, match="only goes up"):
+        db.execute("UPDATE spending SET spent = ?", (store_module._to_blob(low),))
+    db.execute("UPDATE spending SET spent = ?", (store_module._to_blob(high + 1),))  # up is fine
+    assert store.get(mid).spent == (high + 1,)
+
+
+@pytest.mark.parametrize("value", [b"\x00" * 31, b"\x00" * 33, "0" * 64, 5])
+def test_spending_must_be_a_32_byte_blob(path: Path, store: MandateStore, value: object) -> None:
+    mid = store.add(mandate())
+    with pytest.raises(sqlite3.IntegrityError):
+        raw(path).execute(
+            "INSERT INTO spending VALUES (?, ?, 0, ?)", (mid, "2026-10-09T12:00:00Z", value)
+        )
+
+
+@pytest.mark.parametrize(
+    ("index", "amount", "message"),
+    [(1, 1, "an intent it doesn't have"), (0, USDC_50 + 1, "above its budget")],
+)
+def test_spending_rows_that_do_not_fit_the_mandate_are_integrity_failures(
+    path: Path, store: MandateStore, index: int, amount: int, message: str
+) -> None:
+    mid = store.add(mandate())
+    raw(path).execute(
+        "INSERT INTO spending VALUES (?, ?, ?, ?)",
+        (mid, "2026-10-09T12:00:00Z", index, store_module._to_blob(amount)),
+    )
+    with pytest.raises(MandateIntegrityError, match=message):
+        store.get(mid)
+
+
+def test_counters_only_can_charge_budgets_and_record_hashes(
+    store: MandateStore, proxy_view: MandateStore
+) -> None:
+    mid = store.add(mandate())
+    stored = proxy_view.record_transaction(mid, charges={0: USDC_50}, tx_hash=TX)
+    assert stored.status is MandateStatus.EXHAUSTED
+    assert store.get(mid).spent == (USDC_50,)
+    assert store.charged_to(TX) == mid
+
+
+# --- upgrading a version 1 store ----------------------------------------------------------
+
+
+def v1_store(path: Path) -> str:
+    """A store as M3 wrote it: version 1 schema, one mandate, one transaction."""
+    path.parent.mkdir(mode=0o700, exist_ok=True)
+    db = raw(path)
+    db.executescript(f"BEGIN; {store_module._SCHEMA} PRAGMA user_version = 1; COMMIT;")
+    m = mandate()
+    mid = mandate_id(m)
+    db.execute(
+        "INSERT INTO mandates VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            mid,
+            canonical_json(m),
+            m.chain_id,
+            m.principal,
+            "2026-10-09T12:00:00Z",
+            "2026-10-09T12:30:00Z",
+        ),
+    )
+    db.execute("INSERT INTO counters VALUES (?, '2026-10-09T12:00:00Z', 1)", (mid,))
+    db.close()
+    path.chmod(0o600)
+    return mid
+
+
+def test_the_proxy_refuses_a_version_1_store_and_leaves_it_alone(path: Path) -> None:
+    v1_store(path)
+    before = path.read_bytes()
+    with pytest.raises(MandateStoreError, match="schema version 1 .* mandate list"):
+        MandateStore(path, counters_only=True)
+    assert path.read_bytes() == before
+
+
+def test_a_writable_open_upgrades_version_1(
+    path: Path, clock: Clock, caplog: pytest.LogCaptureFixture
+) -> None:
+    mid = v1_store(path)
+    with caplog.at_level(logging.INFO, logger="mandate_firewall"):
+        upgraded = MandateStore(path, clock=clock)
+    assert "upgraded from schema version 1 to 2" in caplog.text
+    stored = upgraded.get(mid)
+    assert (stored.transactions, stored.spent, stored.status) == (1, (0,), MandateStatus.ACTIVE)
+    upgraded.record_transaction(mid, charges={0: 5}, tx_hash=TX)
+    upgraded.close()
+    # Now the proxy can open it.
+    assert MandateStore(path, counters_only=True, clock=clock).get(mid).spent == (5,)
+
+
+def test_an_upgraded_store_has_the_same_schema_as_a_new_one(tmp_path: Path, path: Path) -> None:
+    v1_store(path)
+    MandateStore(path).close()
+    fresh = tmp_path / "fresh" / "mandates.db"
+    MandateStore(fresh, create=True).close()
+
+    def schema(p: Path) -> list[tuple[str, str]]:
+        rows = raw(p).execute("SELECT name, sql FROM sqlite_master ORDER BY name").fetchall()
+        return [(name, " ".join((sql or "").split())) for name, sql in rows]
+
+    assert schema(path) == schema(fresh)
+
+
+def test_a_spent_budget_writes_the_exhausted_event(path: Path, store: MandateStore) -> None:
+    mid = store.add(mandate())
+    store.record_transaction(mid, charges={0: USDC_50})
+    events = raw(path).execute("SELECT event FROM events WHERE mandate_id = ?", (mid,)).fetchall()
+    assert events == [("exhausted",)]
+
+
+def test_a_spent_budget_reads_as_exhausted_even_without_the_event(
+    path: Path, store: MandateStore
+) -> None:
+    # Like the transaction count: the status follows from the numbers too, so
+    # a lost (or deleted) event doesn't revive a mandate whose budget is gone.
+    mid = store.add(mandate())
+    raw(path).execute(
+        "INSERT INTO spending VALUES (?, ?, 0, ?)",
+        (mid, "2026-10-09T12:00:00Z", store_module._to_blob(USDC_50)),
+    )
+    assert store.get(mid).status is MandateStatus.EXHAUSTED
+
+
+def test_a_bool_is_not_an_intent_index(store: MandateStore) -> None:
+    mid = store.add(two_intents())  # True == 1 would be a valid index here
+    with pytest.raises(ValueError, match="intent the mandate doesn't have"):
+        store.record_transaction(mid, charges={True: 1})  # type: ignore[dict-item]
+
+
+@pytest.mark.parametrize("value", [b"\x00" * 31, b"\x00" * 33, "00" * 32, 7])
+def test_reading_a_spending_amount_that_is_not_32_bytes(value: object) -> None:
+    # The schema's CHECK makes this unreachable unless the table was replaced.
+    with pytest.raises(MandateIntegrityError, match="not 32 bytes"):
+        store_module._from_blob(value)

@@ -7,7 +7,7 @@ connection. The agent runs as another user and can't open the file, so file
 permissions are the boundary (docs/m3-plan.md §3). The file is created 0600;
 a store that other users can reach is warned about, like the audit log.
 
-Three tables:
+Five tables (schema version 2):
 - mandates: the canonical JSON of each mandate, keyed by its sha256 id.
   Append-only: SQLite triggers refuse UPDATE and DELETE. Every read re-checks
   that the bytes are canonical and hash to the id, and that the lookup columns
@@ -17,18 +17,32 @@ Three tables:
 - counters: transactions charged per (mandate, period start). One-shot
   mandates have one period, starting at created_at. Standing mandates (M5)
   will add more rows, not columns.
+- spending (M4): how much of each intent's budget is spent, per (mandate,
+  period start, intent index). Amounts are uint256, which SQLite's 64-bit
+  integers can't hold, so they are stored as 32-byte big-endian BLOBs.
+  SQLite compares BLOBs with memcmp, and for equal-length big-endian bytes
+  that is numeric order, so the "only goes up" trigger stays a plain `<`.
+  (A decimal string would sort "9" after "10".)
+- charged (M4): the hash of every charged transaction, so a re-send of the
+  same signed bytes is never charged twice (docs/m4-plan.md §4).
+
+Version 1 stores (M3) are upgraded to version 2 by any writable open (the
+capture CLI). The proxy opens counters-only and never upgrades: it refuses a
+version 1 store and says how to upgrade it.
 
 Not tamper-evident against the firewall's own OS user: whoever can write the
-file can drop the triggers and delete a "revoked" event or a counter row.
-Content can't be changed undetected (the hash), status and counts can.
+file can drop the triggers and delete a "revoked" event, a counter or a
+spending row. Content can't be changed undetected (the hash), status, counts
+and spending can.
 """
 
 import logging
 import os
+import re
 import sqlite3
 import stat
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
@@ -42,11 +56,14 @@ from mandate_firewall.mandate.canonical import (
     mandate_id,
     parse_canonical,
 )
-from mandate_firewall.mandate.models import Mandate
+from mandate_firewall.mandate.models import Mandate, TransferIntent
+from mandate_firewall.models import UINT256_MAX
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+UINT256_BYTES = 32
+_TX_HASH = re.compile(r"0x[0-9a-fA-F]{64}")
 # A mandate created this far in the future means the capture machine's clock
 # and ours disagree; refuse rather than guess which one is right.
 MAX_CLOCK_SKEW = timedelta(minutes=1)
@@ -94,6 +111,37 @@ WHEN NEW.transactions < OLD.transactions
 BEGIN SELECT RAISE(ABORT, 'counters only go up'); END;
 """
 
+# Added in schema version 2 (M4). Applied on top of _SCHEMA for a new store,
+# and on its own to upgrade a version 1 store, so both end up identical.
+_SCHEMA_V2 = """
+CREATE TABLE spending (
+    mandate_id   TEXT NOT NULL REFERENCES mandates (id),
+    period_start TEXT NOT NULL,
+    intent_index INTEGER NOT NULL CHECK (intent_index >= 0),
+    spent        BLOB NOT NULL CHECK (length(spent) = 32),
+    PRIMARY KEY (mandate_id, period_start, intent_index)
+) STRICT;
+
+CREATE TABLE charged (
+    tx_hash    TEXT PRIMARY KEY,
+    mandate_id TEXT NOT NULL REFERENCES mandates (id),
+    at         TEXT NOT NULL
+) STRICT;
+
+CREATE TRIGGER spending_no_delete BEFORE DELETE ON spending
+BEGIN SELECT RAISE(ABORT, 'spending is never deleted'); END;
+CREATE TRIGGER spending_only_up BEFORE UPDATE ON spending
+WHEN NEW.spent < OLD.spent
+  OR NEW.mandate_id IS NOT OLD.mandate_id
+  OR NEW.period_start IS NOT OLD.period_start
+  OR NEW.intent_index IS NOT OLD.intent_index
+BEGIN SELECT RAISE(ABORT, 'spending only goes up'); END;
+CREATE TRIGGER charged_no_update BEFORE UPDATE ON charged
+BEGIN SELECT RAISE(ABORT, 'charged transactions are append-only'); END;
+CREATE TRIGGER charged_no_delete BEFORE DELETE ON charged
+BEGIN SELECT RAISE(ABORT, 'charged transactions are append-only'); END;
+"""
+
 
 class MandateStoreError(Exception):
     """The store can't be opened, read or written."""
@@ -107,17 +155,36 @@ class MandateConflictError(MandateStoreError):
     """The principal already has an active mandate (and replace wasn't asked)."""
 
 
-class MandateNotActiveError(MandateStoreError):
+class ChargeRefusedError(MandateStoreError):
+    """The mandate can't take this transaction. Nothing was charged. The
+    message is returned to the agent, so it never contains a budget or an
+    amount (docs/m4-plan.md, Decision 6)."""
+
+
+class MandateNotActiveError(ChargeRefusedError):
     """The mandate is expired, revoked or exhausted, or doesn't exist."""
 
 
-# What a counters_only connection may write: counters, the "exhausted" event a
-# full counter implies, and SQLite's AUTOINCREMENT bookkeeping for events.
+class BudgetExceededError(ChargeRefusedError):
+    """A charge would exceed an intent's budget, or an approval would exceed
+    what is left of it. Usually another transaction spent the budget after
+    this one was verified."""
+
+
+class AlreadyChargedError(ChargeRefusedError):
+    """This exact transaction (same hash) was already charged."""
+
+
+# What a counters_only connection may write: counters, spending, charged
+# transaction hashes, the "exhausted" event a full counter or budget implies,
+# and SQLite's AUTOINCREMENT bookkeeping for events.
 # Everything not listed is denied: no mandate rows, no status changes by
 # UPDATE, no DELETE, no schema changes (DROP TRIGGER), no PRAGMA, no ATTACH.
 _COUNTERS_ONLY_WRITES: dict[int, frozenset[str]] = {
-    sqlite3.SQLITE_INSERT: frozenset({"counters", "events", "sqlite_sequence"}),
-    sqlite3.SQLITE_UPDATE: frozenset({"counters", "sqlite_sequence"}),
+    sqlite3.SQLITE_INSERT: frozenset(
+        {"counters", "events", "sqlite_sequence", "spending", "charged"}
+    ),
+    sqlite3.SQLITE_UPDATE: frozenset({"counters", "sqlite_sequence", "spending"}),
 }
 _COUNTERS_ONLY_ALWAYS = frozenset(
     {
@@ -151,6 +218,7 @@ class StoredMandate(BaseModel):
     mandate: Mandate
     status: MandateStatus
     transactions: int  # charged so far, in the current period
+    spent: tuple[int, ...]  # per intent, in base units, in the current period
 
 
 class MandateStore:
@@ -257,26 +325,88 @@ class MandateStore:
             self._event(db, mid, MandateStatus.REVOKED, now)
         return True
 
-    def record_transaction(self, mid: str) -> StoredMandate:
-        """Charge one transaction to an active mandate, and mark it exhausted
-        when that reaches max_transactions. The check and the increment are
-        one transaction, so two callers can't both take the last slot.
-        Raises MandateNotActiveError if the mandate can't take it."""
+    def record_transaction(
+        self,
+        mid: str,
+        *,
+        charges: Mapping[int, int] | None = None,
+        approval_limits: Mapping[int, int] | None = None,
+        tx_hash: str | None = None,
+    ) -> StoredMandate:
+        """Charge one transaction to an active mandate.
+
+        `charges` maps intent index -> amount spent from its budget.
+        `approval_limits` maps intent index -> an allowance the transaction
+        grants, which must fit in what is left of that budget after the
+        charges. `tx_hash`, if given, is recorded so the same transaction is
+        never charged twice.
+
+        Everything is checked and written in one SQLite transaction that
+        holds the write lock from the start (BEGIN IMMEDIATE). The verifier
+        decided with the spending it read before simulation; this is the
+        check that counts, so two transactions racing for the same budget
+        can't both get it. The mandate is marked exhausted when it reaches
+        max_transactions, or when every intent's budget is fully spent.
+
+        Raises a ChargeRefusedError (not active, over budget, already
+        charged) with nothing written, or ValueError for malformed input.
+        """
+        charges = dict(charges or {})
+        limits = dict(approval_limits or {})
+        tx_hash = _check_tx_hash(tx_hash)
         now = self._now()
         with self._write() as db:
             stored = self._load(db, mid, now)
             if stored.status is not MandateStatus.ACTIVE:
                 raise MandateNotActiveError(f"mandate {mid} is {stored.status}")
+            budgets = _budgets(stored.mandate)
+            _check_amounts(charges, len(budgets), "charge")
+            _check_amounts(limits, len(budgets), "approval limit")
+            if tx_hash is not None and self._charged_to(db, tx_hash) is not None:
+                raise AlreadyChargedError(f"transaction {tx_hash} was already charged")
+
+            spent = list(stored.spent)
+            for index, amount in charges.items():
+                spent[index] += amount
+                if spent[index] > budgets[index]:
+                    raise BudgetExceededError(
+                        f"mandate {mid}: intent {index + 1} has too little budget left"
+                    )
+            for index, amount in limits.items():
+                if budgets[index] - spent[index] < amount:
+                    raise BudgetExceededError(
+                        f"mandate {mid}: intent {index + 1} has too little budget left "
+                        "for the approval"
+                    )
+
             period = _ts(stored.mandate.created_at)  # one period until M5
+            for index in sorted(charges):
+                db.execute(
+                    "INSERT INTO spending VALUES (?, ?, ?, ?)"
+                    " ON CONFLICT (mandate_id, period_start, intent_index)"
+                    " DO UPDATE SET spent = excluded.spent",
+                    (mid, period, index, _to_blob(spent[index])),
+                )
             db.execute(
                 "INSERT INTO counters VALUES (?, ?, 1) ON CONFLICT (mandate_id, period_start)"
                 " DO UPDATE SET transactions = transactions + 1",
                 (mid, period),
             )
+            if tx_hash is not None:
+                db.execute("INSERT INTO charged VALUES (?, ?, ?)", (tx_hash, mid, _ts(now)))
             used = stored.transactions + 1
-            if used >= stored.mandate.limits.max_transactions:
+            if used >= stored.mandate.limits.max_transactions or spent == budgets:
                 self._event(db, mid, MandateStatus.EXHAUSTED, now)
             return self._load(db, mid, now)
+
+    def charged_to(self, tx_hash: str) -> str | None:
+        """The id of the mandate this transaction was charged to, or None."""
+        checked = _check_tx_hash(tx_hash)
+        with self._lock:
+            try:
+                return self._charged_to(self._db, checked)  # type: ignore[arg-type]
+            except sqlite3.Error as exc:
+                raise MandateStoreError(f"cannot read mandate store: {exc}") from None
 
     # --- reads ----------------------------------------------------------------
 
@@ -340,6 +470,10 @@ class MandateStore:
                     raise MandateStoreError(f"mandate store write failed: {exc}") from None
                 raise
 
+    def _charged_to(self, db: sqlite3.Connection, tx_hash: str) -> str | None:
+        row = db.execute("SELECT mandate_id FROM charged WHERE tx_hash = ?", (tx_hash,)).fetchone()
+        return row[0] if row else None
+
     def _active(
         self, db: sqlite3.Connection, chain_id: int, principal: str, now: datetime
     ) -> list[StoredMandate]:
@@ -376,6 +510,11 @@ class MandateStore:
                 "SELECT transactions FROM counters WHERE mandate_id = ? AND period_start = ?",
                 (mid, row[3]),
             ).fetchone()
+            spending = db.execute(
+                "SELECT intent_index, spent FROM spending"
+                " WHERE mandate_id = ? AND period_start = ?",
+                (mid, row[3]),
+            ).fetchall()
         except sqlite3.Error as exc:
             raise MandateStoreError(f"cannot read mandate store: {exc}") from None
 
@@ -397,15 +536,34 @@ class MandateStore:
             raise MandateIntegrityError(f"mandate {mid}: lookup columns do not match content")
 
         transactions = counter[0] if counter else 0
+        budgets = _budgets(mandate)
+        spent = [0] * len(budgets)
+        for index, blob in spending:
+            # The schema allows any index and any 32 bytes. A row that
+            # doesn't fit this mandate wasn't written by record_transaction.
+            if not 0 <= index < len(budgets):
+                raise MandateIntegrityError(
+                    f"mandate {mid}: spending for an intent it doesn't have"
+                )
+            spent[index] = _from_blob(blob)
+            if spent[index] > budgets[index]:
+                raise MandateIntegrityError(f"mandate {mid}: spending above its budget")
+
         if MandateStatus.REVOKED in events:
             status = MandateStatus.REVOKED
-        elif MandateStatus.EXHAUSTED in events or transactions >= mandate.limits.max_transactions:
+        elif (
+            MandateStatus.EXHAUSTED in events
+            or transactions >= mandate.limits.max_transactions
+            or spent == budgets
+        ):
             status = MandateStatus.EXHAUSTED
         elif now >= mandate.expires_at:
             status = MandateStatus.EXPIRED
         else:
             status = MandateStatus.ACTIVE
-        return StoredMandate(id=mid, mandate=mandate, status=status, transactions=transactions)
+        return StoredMandate(
+            id=mid, mandate=mandate, status=status, transactions=transactions, spent=tuple(spent)
+        )
 
     def _event(self, db: sqlite3.Connection, mid: str, event: MandateStatus, now: datetime) -> None:
         db.execute(
@@ -417,6 +575,16 @@ class MandateStore:
         version = self._db.execute("PRAGMA user_version").fetchone()[0]
         if version == SCHEMA_VERSION:
             return
+        if version == 1:
+            if self.counters_only:
+                # The proxy never changes the schema, upgrades included.
+                raise MandateStoreError(
+                    "mandate store has schema version 1 and must be upgraded: run "
+                    "`mandate-firewall mandate list` once, as the firewall's user"
+                )
+            self._db.executescript(f"BEGIN; {_SCHEMA_V2} PRAGMA user_version = 2; COMMIT;")
+            logger.info("mandate store %s upgraded from schema version 1 to 2", self.path)
+            return
         if version != 0:
             raise MandateStoreError(f"unknown mandate store schema version {version}")
         if self.counters_only:
@@ -425,7 +593,44 @@ class MandateStore:
         tables = self._db.execute("SELECT count(*) FROM sqlite_master").fetchone()[0]
         if tables:
             raise MandateStoreError("file has tables but no mandate store schema version")
-        self._db.executescript(f"BEGIN; {_SCHEMA} PRAGMA user_version = {SCHEMA_VERSION}; COMMIT;")
+        self._db.executescript(
+            f"BEGIN; {_SCHEMA} {_SCHEMA_V2} PRAGMA user_version = {SCHEMA_VERSION}; COMMIT;"
+        )
+
+
+def _budgets(mandate: Mandate) -> list[int]:
+    return [
+        i.budget.max if isinstance(i, TransferIntent) else i.sell_budget.max
+        for i in mandate.intents
+    ]
+
+
+def _check_amounts(amounts: dict[int, int], intents: int, what: str) -> None:
+    for index, amount in amounts.items():
+        if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < intents:
+            raise ValueError(f"{what} for an intent the mandate doesn't have")
+        if isinstance(amount, bool) or not isinstance(amount, int) or not 0 < amount <= UINT256_MAX:
+            raise ValueError(f"a {what} must be a positive uint256")
+
+
+def _check_tx_hash(tx_hash: str | None) -> str | None:
+    if tx_hash is None:
+        return None
+    if not isinstance(tx_hash, str) or not _TX_HASH.fullmatch(tx_hash):
+        raise ValueError("a transaction hash is 0x followed by 64 hex digits")
+    return tx_hash.lower()
+
+
+def _to_blob(value: int) -> bytes:
+    """A uint256 as 32 big-endian bytes: fixed length, so memcmp order is
+    numeric order."""
+    return value.to_bytes(UINT256_BYTES, "big")
+
+
+def _from_blob(value: object) -> int:
+    if not isinstance(value, bytes) or len(value) != UINT256_BYTES:
+        raise MandateIntegrityError("a spending amount is not 32 bytes")
+    return int.from_bytes(value, "big")
 
 
 def _ts(value: datetime) -> str:

@@ -25,6 +25,15 @@ from mandate_firewall.simulate.simulator import (
     TooManyStateChecksError,
     TransactionRejectedError,
 )
+from mandate_firewall.verify.flows import analyze
+from mandate_firewall.verify.models import (
+    NATIVE,
+    Anomaly,
+    AnomalyCode,
+    Asset,
+    Flow,
+    FlowDirection,
+)
 from tests.contracts import load
 from tests.integration.chain import ALICE, BOB, THIEF, balance, deploy, sign, transact
 from tests.integration.conftest import Service, rpc_result, start, stop
@@ -377,3 +386,77 @@ async def test_latency(simulator: Simulator, chain: Chain, capsys: pytest.Captur
             f"\nsimulation p50: {statistics.median(same_head):.0f} ms same head (revert), "
             f"{statistics.median(new_head):.0f} ms new head (anvil_reset); local upstream"
         )
+
+
+# --- the verifier's view of real effects (M4) -----------------------------------------
+#
+# verify/flows.py on effects the simulator really produces, so the hand-built
+# Effects in tests/unit/test_verify_flows.py can't drift from reality. Above
+# all, the principal's ETH arithmetic must reconcile on real transactions, or
+# every transaction would escalate.
+
+OUT = FlowDirection.OUT
+
+
+async def test_flows_eth_send(simulator: Simulator, chain: Chain) -> None:
+    result = analyze(await simulate(simulator, chain, BOB, value=10**18), ALICE)
+    assert result.flows == (Flow(asset=NATIVE, direction=OUT, counterparty=BOB, amount=10**18),)
+    assert result.anomalies == ()
+
+
+async def test_flows_eth_through_a_forwarder(simulator: Simulator, chain: Chain) -> None:
+    data = FORWARDER.call_data("forward", BOB)
+    effects = await simulate(simulator, chain, chain.forwarder, data, value=3 * 10**17)
+    result = analyze(effects, ALICE)
+    assert result.flows == (
+        Flow(asset=NATIVE, direction=OUT, counterparty=chain.forwarder, amount=3 * 10**17),
+    )
+    assert result.anomalies == ()
+
+
+async def test_flows_erc20_transfer(simulator: Simulator, chain: Chain) -> None:
+    data = ERC20.call_data("transfer", BOB, 50_000_000)
+    result = analyze(await simulate(simulator, chain, chain.token, data), ALICE)
+    assert result.flows == (
+        Flow(asset=Asset(token=chain.token), direction=OUT, counterparty=BOB, amount=50_000_000),
+    )
+    assert result.anomalies == ()
+
+
+async def test_flows_erc20_approve_has_no_flow(simulator: Simulator, chain: Chain) -> None:
+    data = ERC20.call_data("approve", BOB, 2**256 - 1)
+    result = analyze(await simulate(simulator, chain, chain.token, data), ALICE)
+    assert (result.flows, result.anomalies) == ((), ())  # approvals are the matcher's job
+
+
+async def test_flows_nft_transfer(simulator: Simulator, chain: Chain) -> None:
+    data = ERC721.call_data("transferFrom", ALICE, THIEF, 7)
+    result = analyze(await simulate(simulator, chain, chain.nft, data), ALICE)
+    assert result.flows == (
+        Flow(asset=Asset(token=chain.nft), direction=OUT, counterparty=THIEF, amount=1),
+    )
+    assert result.anomalies == ()
+
+
+async def test_flows_lying_token_redirect_escalates(simulator: Simulator, chain: Chain) -> None:
+    data = LYING.call_data("transfer", BOB, 10)
+    result = analyze(await simulate(simulator, chain, chain.lying, data), ALICE)
+    assert result.anomalies == (
+        Anomaly(code=AnomalyCode.INCONSISTENT_TOKEN_STATE, contract=chain.lying, account=BOB),
+    )
+
+
+async def test_flows_lying_fake_transfer_escalates(simulator: Simulator, chain: Chain) -> None:
+    data = LYING.call_data("fakeTransfer", BOB, 5)
+    result = analyze(await simulate(simulator, chain, chain.lying, data), ALICE)
+    assert result.anomalies == (
+        Anomaly(code=AnomalyCode.INCONSISTENT_TOKEN_STATE, contract=chain.lying, account=ALICE),
+        Anomaly(code=AnomalyCode.INCONSISTENT_TOKEN_STATE, contract=chain.lying, account=BOB),
+    )
+
+
+async def test_flows_contract_creation_escalates(simulator: Simulator, chain: Chain) -> None:
+    effects = await simulate(simulator, chain, None, ERC20.deploy_data())
+    result = analyze(effects, ALICE)
+    (created,) = effects.contracts_created
+    assert result.anomalies == (Anomaly(code=AnomalyCode.CONTRACT_CREATED, contract=created),)

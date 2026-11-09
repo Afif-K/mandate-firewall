@@ -9,8 +9,8 @@ from mandate_firewall.models import TokenStandard
 from mandate_firewall.simulate.logs import decode_logs
 from mandate_firewall.simulate.trace import parse_call_trace
 from tests.contracts import NAMES, load
-from tests.integration.chain import ALICE, BOB, THIEF, balance, call, deploy, transact
-from tests.integration.conftest import Service, rpc_result
+from tests.integration.chain import ALICE, BOB, THIEF, balance, call, deploy, send, transact
+from tests.integration.conftest import Service, rpc_call, rpc_result
 
 pytestmark = pytest.mark.anvil
 
@@ -140,3 +140,119 @@ def test_sim_detector_depends_on_coinbase(anvil: Service) -> None:
         assert balance(anvil.url, THIEF) - thief_before == 1
     finally:
         rpc_result(anvil.url, "anvil_setCoinbase", [anvil_coinbase])
+
+
+# --- MockRouter (docs/m4-plan.md §7) ------------------------------------------------
+
+USD = 10**6  # MockERC20 has 6 decimals
+# 0.03 mETH per 100 mUSD, the demo's minimum: 100 * 10**6 * 3 // 10_000 == 30_000.
+RATE = (3, 10_000)
+
+
+@pytest.fixture
+def market(anvil: Service) -> dict[str, str]:
+    """A fresh router (so no test sees another's leftovers) with 1 mETH of
+    liquidity, a mUSD -> mETH rate, and 100 mUSD for ALICE."""
+    token, router = load("MockERC20"), load("MockRouter")
+    musd, meth = deploy(anvil.url, token), deploy(anvil.url, token)
+    address = deploy(anvil.url, router)
+    transact(anvil.url, token, musd, "mint", ALICE, 100 * USD)
+    transact(anvil.url, token, meth, "mint", address, 1 * USD)
+    transact(anvil.url, router, address, "setRate", musd, meth, *RATE)
+    return {"musd": musd, "meth": meth, "router": address}
+
+
+def balances(url: str, token: str, *who: str) -> list[int]:
+    return [call(url, load("MockERC20"), token, "balanceOf", w) for w in who]
+
+
+def swap_data(m: dict[str, str], recipient: str, amount_in: int, minimum: int = 0) -> str:
+    return load("MockRouter").call_data(
+        "exactInputSingle", m["musd"], m["meth"], recipient, amount_in, minimum
+    )
+
+
+def test_mock_router_swaps_at_its_rate(anvil: Service, market: dict[str, str]) -> None:
+    m, token = market, load("MockERC20")
+    transact(anvil.url, token, m["musd"], "approve", m["router"], 100 * USD)
+    receipt = send(anvil.url, m["router"], swap_data(m, ALICE, 100 * USD, minimum=30_000))
+    assert receipt["status"] == "0x1"
+
+    assert balances(anvil.url, m["musd"], ALICE, m["router"]) == [0, 100 * USD]
+    assert balances(anvil.url, m["meth"], ALICE, m["router"]) == [30_000, USD - 30_000]
+    decoded = decode_logs(receipt["logs"], receipt["transactionHash"])
+    assert [(t.token, t.sender, t.recipient, t.amount) for t in decoded.transfers] == [
+        (m["musd"], ALICE, m["router"], 100 * USD),
+        (m["meth"], m["router"], ALICE, 30_000),
+    ]
+    # No events of its own: only the tokens log, so nothing for the verifier
+    # to escalate as an unrecognized event mentioning the principal.
+    assert decoded.unrecognized == ()
+    assert {to_checksum_address(log["address"]) for log in receipt["logs"]} <= {
+        m["musd"],
+        m["meth"],
+    }
+
+
+def test_mock_router_pays_any_recipient(anvil: Service, market: dict[str, str]) -> None:
+    """The within-policy, off-mandate attack: right router, right token,
+    right amount, output to the thief."""
+    m = market
+    transact(anvil.url, load("MockERC20"), m["musd"], "approve", m["router"], 100 * USD)
+    send(anvil.url, m["router"], swap_data(m, THIEF, 100 * USD))
+    assert balances(anvil.url, m["meth"], ALICE, THIEF) == [0, 30_000]
+    assert balances(anvil.url, m["musd"], ALICE) == [0]
+
+
+def test_mock_router_minimum_and_a_manipulated_rate(anvil: Service, market: dict[str, str]) -> None:
+    m, router = market, load("MockRouter")
+    transact(anvil.url, load("MockERC20"), m["musd"], "approve", m["router"], 100 * USD)
+    # Its own minimum check: one unit above the quote reverts.
+    reply = rpc_call(
+        anvil.url,
+        "eth_call",
+        [{"from": ALICE, "to": m["router"], "data": swap_data(m, ALICE, 100 * USD, 30_001)}],
+    )
+    assert "too little received" in reply["error"]["message"]
+
+    # Anyone can move the price; without a minimum the swap still goes through.
+    transact(anvil.url, router, m["router"], "setRate", m["musd"], m["meth"], 1, 10_000)
+    assert call(anvil.url, router, m["router"], "quote", m["musd"], m["meth"], 100 * USD) == 10_000
+    send(anvil.url, m["router"], swap_data(m, ALICE, 100 * USD))
+    assert balances(anvil.url, m["meth"], ALICE) == [10_000]
+
+
+def test_mock_router_pull_and_sweep_drain(anvil: Service, market: dict[str, str]) -> None:
+    """docs/m4-plan.md §6: in one multicall, swap 1 mUSD honestly, pull the
+    other 99 into the router and sweep them to the thief. The principal
+    "sold 100 mUSD through the right venue and received mETH"."""
+    m, router = market, load("MockRouter")
+    transact(anvil.url, load("MockERC20"), m["musd"], "approve", m["router"], 100 * USD)
+    calls = [
+        swap_data(m, ALICE, 1 * USD),
+        router.call_data("pull", m["musd"], 99 * USD),
+        router.call_data("sweepToken", m["musd"], 0, THIEF),
+    ]
+    receipt = transact(
+        anvil.url, router, m["router"], "multicall", [bytes.fromhex(c[2:]) for c in calls]
+    )
+
+    assert balances(anvil.url, m["musd"], ALICE, m["router"], THIEF) == [0, 0, 100 * USD]
+    assert balances(anvil.url, m["meth"], ALICE) == [300]  # something arrived: bought > 0
+    decoded = decode_logs(receipt["logs"], receipt["transactionHash"])
+    assert decoded.unrecognized == ()
+    # multicall kept msg.sender: both pulls are transferFrom(ALICE -> router).
+    assert [(t.sender, t.amount) for t in decoded.transfers if t.token == m["musd"]] == [
+        (ALICE, 1 * USD),
+        (ALICE, 99 * USD),
+        (m["router"], 100 * USD),
+    ]
+
+
+def test_mock_router_multicall_bubbles_up_the_reason(
+    anvil: Service, market: dict[str, str]
+) -> None:
+    m, router = market, load("MockRouter")
+    data = router.call_data("multicall", [bytes.fromhex(swap_data(m, ALICE, USD, 10**9)[2:])])
+    reply = rpc_call(anvil.url, "eth_call", [{"from": ALICE, "to": m["router"], "data": data}])
+    assert "too little received" in reply["error"]["message"]

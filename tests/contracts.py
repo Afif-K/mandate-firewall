@@ -13,7 +13,15 @@ from web3 import Web3
 
 CONTRACTS_DIR = Path(__file__).parent / "fixtures" / "contracts"
 ARTIFACTS_DIR = CONTRACTS_DIR / "artifacts"
-NAMES = ("EthForwarder", "LyingToken", "MockERC20", "MockERC721", "SimDetector", "TimeBomb")
+NAMES = (
+    "EthForwarder",
+    "LyingToken",
+    "MockERC20",
+    "MockERC721",
+    "MockRouter",
+    "SimDetector",
+    "TimeBomb",
+)
 
 
 @dataclass(frozen=True)

@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     # The mandate store the capture CLI writes (same MANDATE_DB_PATH variable).
     # The proxy refuses to start without it and only ever writes counters to it.
     mandate_db_path: Path = Path("state/mandates.db")
+    # A directory with your own <chain_id>.json token and venue registry (the
+    # same REGISTRY_PATH variable capture reads). None: the shipped one. The
+    # proxy uses it only to name things in explanations, never to decide, but
+    # it refuses to start without a valid registry for the upstream's chain.
+    registry_path: Path | None = None
     # Pre-EIP-155 legacy transactions carry no chain id, so a signature is valid
     # on every chain and anyone can replay it elsewhere. Off unless opted in.
     allow_legacy_unprotected: bool = False

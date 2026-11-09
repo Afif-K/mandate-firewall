@@ -4,14 +4,20 @@ Request flow:
     HTTP body -> size/content-type checks -> JSON parse -> single or batch
     -> per request: validate -> classify method -> deny | forward | intercept
 
-An intercepted transaction is decoded, checked, matched to its sender's
-active mandate, simulated on the private fork, charged to the mandate,
-audited, and only then forwarded. It is blocked if any step fails, if the
-sender has no active mandate, or if it reverts in simulation.
+An intercepted transaction goes through these steps, in this order:
 
-Until M4, a transaction from a sender that has an active mandate is not yet
-compared with the mandate's content: the gate checks that a confirmed,
-unexpired mandate exists and has transactions left, nothing more.
+    decode, check the chain id
+    -> re-send? (these exact bytes were already charged: forward them again)
+    -> find the sender's active mandate
+    -> simulate on the private fork (an error or a revert blocks)
+    -> verify the effects against the mandate (verify/matcher.py)
+    -> not allowed: explain, audit, refuse with the violation codes
+    -> charge the mandate (the store re-checks every budget atomically)
+    -> explain, audit, and only then forward the exact bytes
+
+It is blocked if any step fails. Escalate (an anomaly) is a block with a
+louder explanation: nothing is held for a human to release later; the human
+acts on the mandate instead (docs/m4-plan.md §3).
 
 Run it with `mandate-firewall serve` (see cli.py), which also sets up logging.
 """
@@ -29,9 +35,10 @@ from mandate_firewall.audit import AuditLog, AuditLogError, AuditRecord
 from mandate_firewall.config import Settings, redact_url
 from mandate_firewall.decode.calldata import decode_calldata
 from mandate_firewall.decode.transaction import TransactionDecodeError, decode_raw_transaction
+from mandate_firewall.mandate.registry import Registry, RegistryError, load_registry
 from mandate_firewall.mandate.store import (
+    ChargeRefusedError,
     MandateIntegrityError,
-    MandateNotActiveError,
     MandateStatus,
     MandateStore,
     MandateStoreError,
@@ -61,6 +68,9 @@ from mandate_firewall.proxy.methods import MethodClass, classify
 from mandate_firewall.proxy.upstream import UpstreamClient, UpstreamError
 from mandate_firewall.simulate.node import SimulatorNode, SimulatorStartupError, resolve_network
 from mandate_firewall.simulate.simulator import SimulationError, Simulator
+from mandate_firewall.verify.explain import agent_reason, explain
+from mandate_firewall.verify.matcher import match
+from mandate_firewall.verify.models import Verdict
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +81,16 @@ MAX_BATCH_SIZE = 100
 # briefly by `mandate new`/`revoke`) before it is blocked. The store is
 # synchronous, so this is also how long the event loop can stall.
 MANDATE_STORE_BUSY_TIMEOUT_SECONDS = 1.0
+# The verifier or the explanation raised: a bug, not a verdict. Fail closed.
+VERIFICATION_FAILED = "verification failed: internal error"
+# A re-send can be forwarded only while its mandate still stands. Exhausted
+# counts: the transaction that used the mandate up is the one most likely to
+# be retried, and it was already charged. Revoked and expired mean "stop".
+RESEND_STATUSES = frozenset({MandateStatus.ACTIVE, MandateStatus.EXHAUSTED})
+
+
+class RegistryUnavailableError(RuntimeError):
+    """Raised at startup when there is no valid registry for the upstream's chain."""
 
 
 class UpstreamUnavailableError(RuntimeError):
@@ -110,7 +130,7 @@ async def start_simulator(
 class Proxy:
     """Per-request JSON-RPC handling. Holds the upstream client, the chain id
     that was verified at startup, the audit log, the mandate store (opened
-    counters-only) and the simulator."""
+    counters-only), the simulator and the registry for that chain."""
 
     def __init__(
         self,
@@ -120,6 +140,7 @@ class Proxy:
         audit: AuditLog,
         mandates: MandateStore,
         simulator: TransactionSimulator,
+        registry: Registry,
     ) -> None:
         self.upstream = upstream
         self.chain_id = chain_id
@@ -127,6 +148,7 @@ class Proxy:
         self.audit = audit
         self.mandates = mandates
         self.simulator = simulator
+        self.registry = registry  # names in explanations only; never decides
 
     async def handle(self, obj: Any) -> dict[str, Any]:
         """Handle one request object. Always returns a response; never raises."""
@@ -180,6 +202,31 @@ class Proxy:
             return self._block(
                 request.id, AuditRecord.for_transaction(tx, call, Decision.BLOCK, reason)
             )
+
+        previous, reason = self._charged_before(tx)
+        if reason is not None:
+            record = AuditRecord.for_transaction(
+                tx,
+                call,
+                Decision.BLOCK,
+                reason,
+                mandate_id=previous.id if previous else None,
+            )
+            return self._block(request.id, record)
+        if previous is not None:
+            # These exact bytes were verified and charged before, and they
+            # can be mined only once, so there is nothing new to check: an
+            # agent retrying after a timeout must not pay twice.
+            logger.info("re-send of tx %s, charged to mandate %s", tx.hash, previous.id)
+            record = AuditRecord.for_transaction(
+                tx,
+                call,
+                Decision.ALLOW,
+                "re-send of a transaction already charged",
+                resend=True,
+                mandate_id=previous.id,
+            )
+            return await self._audit_and_forward(request.id, tx, record)
 
         mandate, reason = self._find_mandate(tx)
         if reason is not None or mandate is None:
@@ -238,52 +285,177 @@ class Proxy:
             )
             return self._block(request.id, record)
 
-        # Charge the mandate. This is the check that counts: the lookup above
-        # ran before simulation, and the mandate may have been revoked, run out
-        # or expired since. record_transaction checks and increments in one
-        # SQLite transaction, so two transactions racing for the last slot
-        # can't both get it.
+        # Verify: the effects against the mandate, with the spending read
+        # before simulation. Pure, so it only fails on a bug.
         try:
-            charged = self.mandates.record_transaction(mid)
-        except MandateNotActiveError as exc:
+            verdict = match(mandate.mandate, mandate.spent, tx, effects)
+        except Exception:
+            logger.exception("verifier crashed on tx %s", tx.hash)
             record = AuditRecord.for_transaction(
-                tx, call, Decision.BLOCK, str(exc), effects=effects, mandate_id=mid
+                tx, call, Decision.BLOCK, VERIFICATION_FAILED, effects=effects, mandate_id=mid
+            )
+            return self._block(request.id, record)
+        if verdict.decision is not Decision.ALLOW:
+            return self._refuse(request.id, tx, call, effects, mandate, verdict)
+
+        # Charge the mandate. This is the check that counts: the lookup and
+        # the verdict used what was read before simulation, and since then
+        # the mandate may have been revoked, run out or expired, or another
+        # transaction may have spent the budget. record_transaction checks
+        # and charges in one SQLite transaction, so two transactions racing
+        # for the last of a budget can't both get it.
+        charges = {c.intent_index: c.amount for c in verdict.charges}
+        try:
+            charged = self.mandates.record_transaction(
+                mid,
+                charges=charges,
+                approval_limits={a.intent_index: a.amount for a in verdict.approval_limits},
+                tx_hash=tx.hash,
+            )
+        except ChargeRefusedError as exc:
+            # Not active, over budget or charged already. The verdict stays on
+            # record (it said allow, from older spending); the decision is the
+            # store's. Its message names no amounts, so the agent may see it.
+            record = AuditRecord.for_transaction(
+                tx, call, Decision.BLOCK, str(exc), effects=effects, verdict=verdict, mandate_id=mid
             )
             return self._block(request.id, record)
         except MandateStoreError as exc:
             return self._block(
-                request.id, self._store_failure(tx, call, exc, effects=effects, mandate_id=mid)
+                request.id,
+                self._store_failure(
+                    tx, call, exc, effects=effects, verdict=verdict, mandate_id=mid
+                ),
             )
 
-        # The counter is charged before the audit write, so if the write
-        # fails, a slot is spent on a transaction we then block. The other
+        # Explained after the charge, with what was left just before it as the
+        # store saw it, so the text is right even if another transaction
+        # charged in between.
+        spent_before = tuple(
+            spent - charges.get(index, 0) for index, spent in enumerate(charged.spent)
+        )
+        try:
+            explanation = explain(
+                verdict,
+                mandate.mandate,
+                spent_before,
+                self.registry,
+                tx_hash=tx.hash,
+                mandate_id=mid,
+            )
+        except Exception:
+            # Already charged, so a slot is lost: that fails closed.
+            logger.exception("explanation failed for tx %s", tx.hash)
+            record = AuditRecord.for_transaction(
+                tx, call, Decision.BLOCK, VERIFICATION_FAILED, effects=effects, verdict=verdict,
+                mandate_id=mid,
+            )  # fmt: skip
+            return self._block(request.id, record)
+
+        # The charge comes before the audit write, so if the write fails, a
+        # slot and budget are spent on a transaction we then block. The other
         # order is worse: an "allow" record for a transaction we couldn't
-        # charge. A lost slot fails closed (the agent can do less, not more).
+        # charge. A lost charge fails closed (the agent can do less, not more).
+        logger.info("allowed tx %s under mandate %s", tx.hash, mid)
         record = AuditRecord.for_transaction(
             tx,
             call,
             Decision.ALLOW,
             effects=effects,
+            verdict=verdict,
+            explanation=explanation,
             mandate_id=mid,
             mandate_transaction=charged.transactions,
         )
+        return await self._audit_and_forward(request.id, tx, record)
+
+    async def _audit_and_forward(
+        self, request_id: Any, tx: DecodedTransaction, record: AuditRecord
+    ) -> dict[str, Any]:
         try:
             self.audit.write(record)
         except AuditLogError as exc:
             # Fail closed: nothing reaches the chain without an audit record.
             logger.error("blocked transaction %s: %s", tx.hash, exc)
             return error_response(
-                request.id, TRANSACTION_REJECTED, "transaction rejected: audit log unavailable"
+                request_id, TRANSACTION_REJECTED, "transaction rejected: audit log unavailable"
             )
 
         # Forward the exact bytes we decoded, never a re-encoding: what we
         # checked must be byte-for-byte what the node receives.
-        response = await self._forward(request.id, "eth_sendRawTransaction", [tx.raw])
+        response = await self._forward(request_id, "eth_sendRawTransaction", [tx.raw])
         if "error" in response:
             logger.warning("upstream rejected tx %s: %s", tx.hash, response["error"]["message"])
         elif response.get("result") != tx.hash:
             logger.error("upstream returned hash %s, expected %s", response.get("result"), tx.hash)
         return response
+
+    def _refuse(
+        self,
+        request_id: Any,
+        tx: DecodedTransaction,
+        call: DecodedCall,
+        effects: Effects,
+        mandate: StoredMandate,
+        verdict: Verdict,
+    ) -> dict[str, Any]:
+        """Block or escalate. The operator gets the full explanation (log and
+        audit record). The agent gets fixed phrases and the codes, never a
+        mandate value (docs/m4-plan.md, Decision 6)."""
+        try:
+            explanation = explain(
+                verdict,
+                mandate.mandate,
+                mandate.spent,
+                self.registry,
+                tx_hash=tx.hash,
+                mandate_id=mandate.id,
+            )
+            reason = agent_reason(verdict)
+        except Exception:
+            logger.exception("explanation failed for tx %s", tx.hash)
+            record = AuditRecord.for_transaction(
+                tx, call, Decision.BLOCK, VERIFICATION_FAILED, effects=effects, verdict=verdict,
+                mandate_id=mandate.id,
+            )  # fmt: skip
+            return self._block(request_id, record)
+        record = AuditRecord.for_transaction(
+            tx,
+            call,
+            verdict.decision,
+            reason,
+            effects=effects,
+            verdict=verdict,
+            explanation=explanation,
+            mandate_id=mandate.id,
+        )
+        data = {
+            "decision": str(verdict.decision),
+            "violations": list(dict.fromkeys(str(v.code) for v in verdict.violations)),
+            "anomalies": list(dict.fromkeys(str(a.code) for a in verdict.anomalies)),
+        }
+        return self._block(request_id, record, data)
+
+    def _charged_before(self, tx: DecodedTransaction) -> tuple[StoredMandate | None, str | None]:
+        """Whether these exact bytes were charged before. (None, None): no,
+        verify them. (mandate, None): yes, forward them as a re-send.
+        (mandate or None, reason): block."""
+        try:
+            mid = self.mandates.charged_to(tx.hash)
+            if mid is None:
+                return None, None
+            previous = self.mandates.get(mid)
+        except MandateStoreError as exc:
+            return None, self._store_failure_reason(tx, exc)
+        if (previous.mandate.chain_id, previous.mandate.principal) != (self.chain_id, tx.sender):
+            # The hash commits to the sender and chain, so the store is wrong.
+            logger.error("tx %s is charged to mandate %s of another account", tx.hash, mid)
+            return None, "mandate store integrity failure"
+        if previous.status not in RESEND_STATUSES:
+            return previous, (
+                f"re-send of a transaction charged to mandate {mid}, which is {previous.status}"
+            )
+        return previous, None
 
     def _check(self, tx: DecodedTransaction) -> str | None:
         """The reason to block this transaction, or None to allow it."""
@@ -337,15 +509,23 @@ class Proxy:
         reason = self._store_failure_reason(tx, exc)
         return AuditRecord.for_transaction(tx, call, Decision.BLOCK, reason, **fields)
 
-    def _block(self, request_id: Any, record: AuditRecord) -> dict[str, Any]:
-        logger.warning("blocked transaction %s: %s", record.hash or "<undecodable>", record.reason)
+    def _block(
+        self, request_id: Any, record: AuditRecord, data: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        if record.explanation is not None:
+            # Starts with BLOCKED or ESCALATED and the transaction hash.
+            logger.warning("%s", record.explanation)
+        else:
+            logger.warning(
+                "blocked transaction %s: %s", record.hash or "<undecodable>", record.reason
+            )
         try:
             self.audit.write(record)
         except AuditLogError as exc:
             # Already blocked, so nothing to fail closed on; make sure it's seen.
             logger.error("audit record lost for blocked transaction: %s", exc)
         return error_response(
-            request_id, TRANSACTION_REJECTED, f"transaction rejected: {record.reason}"
+            request_id, TRANSACTION_REJECTED, f"transaction rejected: {record.reason}", data
         )
 
 
@@ -388,6 +568,18 @@ def create_app(
                     f"cannot fetch chain id from upstream {upstream_name}: {exc}"
                 ) from None
             logger.info("upstream %s, chain id %d", upstream_name, chain_id)
+            try:
+                # Fail closed: an invalid registry is a typo that would put a
+                # wrong name in front of the operator; without one, capture
+                # can't create mandates for this chain either.
+                registry = load_registry(chain_id, settings.registry_path)
+            except RegistryError as exc:
+                raise RegistryUnavailableError(f"cannot load the registry: {exc}") from None
+            logger.info(
+                "registry: %s (%s)",
+                registry.chain_name,
+                settings.registry_path or "shipped",
+            )
             logger.info("audit log %s", settings.audit_log_path)
             logger.info(
                 "mandate store %s: %d mandates, %d active",
@@ -400,7 +592,9 @@ def create_app(
                 simulator = await stack.enter_async_context(start(settings, upstream, chain_id))
             except SimulatorStartupError as exc:
                 raise SimulatorStartupError(str(exc)) from None  # same reason as above
-            app.state.proxy = Proxy(upstream, chain_id, settings, audit, mandates, simulator)
+            app.state.proxy = Proxy(
+                upstream, chain_id, settings, audit, mandates, simulator, registry
+            )
             yield
 
     # No /docs or /openapi.json: the only endpoint is POST /.

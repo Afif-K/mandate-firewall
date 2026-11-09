@@ -76,6 +76,12 @@ class AuditRecord(BaseModel):
     # How the effects compare with the mandate (M4). None if the transaction
     # was blocked before it could be verified (no mandate, no effects).
     verdict: Verdict | None = None
+    # The "You asked / This transaction" text for the operator
+    # (verify/explain.py). None when there is no verdict to explain.
+    explanation: str | None = None
+    # True when these exact bytes were already charged and are forwarded again
+    # without a new simulation or charge (an agent retrying).
+    resend: bool = False
     raw: str
     raw_truncated: bool = False
 
@@ -90,6 +96,8 @@ class AuditRecord(BaseModel):
         effects: Effects | None = None,
         simulation_error: str | None = None,
         verdict: Verdict | None = None,
+        explanation: str | None = None,
+        resend: bool = False,
         mandate_id: str | None = None,
         mandate_transaction: int | None = None,
     ) -> "AuditRecord":
@@ -101,6 +109,8 @@ class AuditRecord(BaseModel):
             effects=effects,
             simulation_error=simulation_error,
             verdict=verdict,
+            explanation=explanation,
+            resend=resend,
             hash=tx.hash,
             tx_type=int(tx.tx_type),
             chain_id=tx.chain_id,

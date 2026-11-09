@@ -23,17 +23,27 @@ from fastapi.testclient import TestClient
 
 from mandate_firewall.audit import AuditLog, AuditLogError
 from mandate_firewall.config import Settings
+from mandate_firewall.mandate.models import AssetRef, Budget, Ratio, SwapIntent
 from mandate_firewall.mandate.store import MandateStore, MandateStoreError
 from mandate_firewall.models import (
+    UINT256_MAX,
     CallFrame,
     CallType,
     DecodedTransaction,
     Effects,
     NativeBalanceChange,
     SimulationStatus,
+    TokenApproval,
+    TokenStandard,
+    TokenStateCheck,
+    TokenTransfer,
 )
 from mandate_firewall.proxy import app as app_module
-from mandate_firewall.proxy.app import UpstreamUnavailableError, create_app
+from mandate_firewall.proxy.app import (
+    RegistryUnavailableError,
+    UpstreamUnavailableError,
+    create_app,
+)
 from mandate_firewall.proxy.jsonrpc import (
     INVALID_PARAMS,
     INVALID_REQUEST,
@@ -45,7 +55,13 @@ from mandate_firewall.proxy.jsonrpc import (
 from mandate_firewall.proxy.upstream import UpstreamClient
 from mandate_firewall.simulate.node import SimulatorStartupError
 from mandate_firewall.simulate.simulator import TransactionRejectedError
-from tests.mandates import native_transfer_mandate, seed_store
+from tests.mandates import (
+    mandate_with,
+    native_transfer_mandate,
+    replace_mandate,
+    seed_store,
+    token_transfer,
+)
 
 UPSTREAM = "http://upstream.test:8545"
 CHAIN_ID = 84532  # Base Sepolia
@@ -53,6 +69,10 @@ CHAIN_ID = 84532  # Base Sepolia
 TEST_KEY = "0x" + "11" * 32
 SENDER = Account.from_key(TEST_KEY).address
 RECIPIENT = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+THIEF = "0x000000000000000000000000000000000000dEaD"
+USDC = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"  # in the shipped registry
+ROUTER = "0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4"  # SwapRouter02, likewise
+GAS = 21_000  # gas used, at a price of 1 wei: the fee is 21000 wei
 
 
 AUDIT_PATH = "logs/audit.jsonl"  # the default, relative to the working directory
@@ -114,32 +134,52 @@ class FakeNode:
 
 class FakeSimulator:
     """Stands in for the anvil fork: records what it was asked to simulate
-    and returns plausible effects, a revert, or raises `outcome`."""
+    and returns plausible effects, a revert, or raises `outcome`.
+
+    Plausible means what the verifier checks holds, as on a real fork: the
+    top call frame carries the transaction's value, and the sender's balance
+    drops by that value plus gas, so ETH sent shows up as a flow and is
+    charged. `overrides` replaces Effects fields (token transfers, a broken
+    balance) for tests that need other effects."""
 
     def __init__(self) -> None:
         self.txs: list[DecodedTransaction] = []
         self.outcome: str | BaseException = "success"
         self.chain_id: int | None = None  # what the proxy started it with
+        self.overrides: dict[str, Any] = {}
 
     async def simulate(self, tx: DecodedTransaction) -> Effects:
         self.txs.append(tx)
         if isinstance(self.outcome, BaseException):
             raise self.outcome
         reverted = self.outcome == "revert"
-        return Effects(
-            tx_hash=tx.hash,
-            sender=tx.sender,
-            chain_id=CHAIN_ID,
-            fork_block_number=1234,
-            fork_block_hash="0x" + "22" * 32,
-            status=SimulationStatus.REVERTED if reverted else SimulationStatus.SUCCESS,
-            revert_data="0x" if reverted else None,
-            gas_used=21_000,
-            effective_gas_price=1,
-            gas_cost=21_000,
-            native_balance_changes=(NativeBalanceChange(address=tx.sender, delta=-21_000),),
-            calls=(CallFrame(depth=0, call_type=CallType.CALL, caller=tx.sender, target=tx.to),),
-        )
+        moved = 0 if reverted else tx.value
+        changes = [NativeBalanceChange(address=tx.sender, delta=-(GAS + moved))]
+        if moved and tx.to is not None:
+            changes.append(NativeBalanceChange(address=tx.to, delta=moved))
+        fields: dict[str, Any] = {
+            "tx_hash": tx.hash,
+            "sender": tx.sender,
+            "chain_id": CHAIN_ID,
+            "fork_block_number": 1234,
+            "fork_block_hash": "0x" + "22" * 32,
+            "status": SimulationStatus.REVERTED if reverted else SimulationStatus.SUCCESS,
+            "revert_data": "0x" if reverted else None,
+            "gas_used": GAS,
+            "effective_gas_price": 1,
+            "gas_cost": GAS,
+            "native_balance_changes": tuple(changes),
+            "calls": (
+                CallFrame(
+                    depth=0,
+                    call_type=CallType.CALL,
+                    caller=tx.sender,
+                    target=tx.to,
+                    value=0 if reverted else tx.value,
+                ),
+            ),
+        }
+        return Effects(**(fields | self.overrides))
 
     def factory(self, settings: Settings, upstream: UpstreamClient, chain_id: int) -> Any:
         @asynccontextmanager
@@ -461,19 +501,60 @@ def test_valid_transaction_is_decoded_logged_and_forwarded(
     assert f"from={SENDER}" in caplog.text
 
 
-def test_allowed_transaction_is_audited_once(client: TestClient, mandate_id: str) -> None:
+def usdc_sent(amount: int, to: str = RECIPIENT) -> dict[str, Any]:
+    """Effects overrides: SENDER's USDC moved to `to`, with the balance
+    checks a real fork would add."""
+    return {
+        "token_transfers": (
+            TokenTransfer(
+                token=USDC,
+                standard=TokenStandard.ERC20,
+                sender=SENDER,
+                recipient=to,
+                amount=amount,
+                log_index=0,
+            ),
+        ),
+        "token_state_checks": tuple(
+            TokenStateCheck(
+                token=USDC,
+                kind="balance",
+                owner=owner,
+                before=10**31,
+                after=10**31 + change,
+                claimed=change,
+                consistent=True,
+            )
+            for owner, change in ((SENDER, -amount), (to, amount))
+        ),
+    }
+
+
+def test_allowed_transaction_is_audited_once(client: TestClient, simulator: FakeSimulator) -> None:
+    # A USDC transfer, under a mandate that covers it: the record carries the
+    # decoded call, the verdict and the explanation.
+    mid = replace_mandate(
+        MANDATE_DB, mandate_with(CHAIN_ID, SENDER, token_transfer(CHAIN_ID, USDC, 10**31))
+    )
+    simulator.overrides = usdc_sent(10**30)
     transfer = "0xa9059cbb" + "00" * 12 + RECIPIENT[2:].lower() + f"{10**30:064x}"
-    raw = sign(to=RECIPIENT, value=0, gas=60_000, data=transfer)
+    raw = sign(to=USDC, value=0, gas=60_000, data=transfer)
     client.post("/", json=rpc("eth_sendRawTransaction", [raw]))
     (record,) = audit_records()
     assert record["decision"] == "allow"
     assert record["reason"] is None
-    assert (record["mandate_id"], record["mandate_transaction"]) == (mandate_id, 1)
+    assert record["resend"] is False
+    assert (record["mandate_id"], record["mandate_transaction"]) == (mid, 1)
+    assert record["verdict"]["charges"] == [{"intent_index": 0, "amount": str(10**30)}]
+    assert record["explanation"].endswith(
+        f"intent 1: 1000000000000000000000000 USDC (token {USDC}), "
+        "9000000000000000000000000 USDC left"
+    )
     assert record["hash"] == "0x" + keccak(hexstr=raw).hex()
     assert record["tx_type"] == 2
     assert record["chain_id"] == str(CHAIN_ID)
     assert record["sender"] == SENDER
-    assert record["to"] == RECIPIENT
+    assert record["to"] == USDC
     assert record["value"] == "0"
     assert record["gas_limit"] == "60000"
     assert record["max_fee_per_gas"] == "3000000000"
@@ -640,7 +721,10 @@ def test_allowed_transaction_is_simulated_and_its_effects_audited(
     assert record["simulation_error"] is None
     effects = record["effects"]
     assert (effects["tx_hash"], effects["status"]) == (tx.hash, "success")
-    assert effects["native_balance_changes"] == [{"address": SENDER, "delta": "-21000"}]
+    assert effects["native_balance_changes"] == [
+        {"address": SENDER, "delta": str(-(10**15 + GAS))},
+        {"address": RECIPIENT, "delta": str(10**15)},
+    ]
 
 
 def test_reverting_transaction_is_blocked(
@@ -914,7 +998,7 @@ def test_counter_write_failure_blocks(
     node: FakeNode,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fail(self: MandateStore, mid: str) -> None:
+    def fail(self: MandateStore, mid: str, **charge: Any) -> None:
         raise MandateStoreError("mandate store write failed: database is locked")
 
     monkeypatch.setattr(MandateStore, "record_transaction", fail)
@@ -966,3 +1050,340 @@ def test_agents_cannot_reach_mandate_methods(
     assert error_code(body) == METHOD_NOT_FOUND
     assert node.calls == []
     assert len(writer().all()) == 1  # the store is unchanged
+
+
+# --- verification (M4): the effects against the mandate -----------------------------
+#
+# SENDER's mandate (the autouse fixture): send at most 1 ETH to RECIPIENT, 100
+# transactions. sign() sends 0.001 ETH to RECIPIENT; FakeSimulator's effects
+# show exactly that, so the verifier charges 0.001 ETH.
+
+ETH = 10**18
+MILLI = 10**15  # 0.001 ETH
+
+
+def test_off_mandate_eth_is_blocked_with_its_codes(
+    client: TestClient, node: FakeNode, mandate_id: str
+) -> None:
+    """The old demo step 6: 0.001 ETH to dEaD under "1 ETH to Bob"."""
+    body = send(client, sign(to=THIEF))
+    assert body["error"] == {
+        "code": TRANSACTION_REJECTED,
+        "message": "transaction rejected: off-mandate: target contract not in mandate; "
+        "recipient not in mandate",
+        "data": {
+            "decision": "block",
+            "violations": ["unnamed_target", "wrong_recipient"],
+            "anomalies": [],
+        },
+    }
+    assert node.calls == []
+    (record,) = audit_records()
+    assert (record["decision"], record["mandate_id"]) == ("block", mandate_id)
+    assert record["verdict"]["decision"] == "block"
+    assert record["verdict"]["charges"] == []
+    assert record["explanation"].startswith(f"BLOCKED  tx {record['hash']}\n")
+    assert f"  sends 0.001 ETH (native) to {THIEF}\n" in record["explanation"]
+    assert record["explanation"].endswith("Nothing was charged.")
+    stored = writer().get(mandate_id)
+    assert (stored.transactions, stored.spent) == (0, (0,))
+
+
+def test_the_agent_is_not_told_mandate_values(client: TestClient) -> None:
+    # The explanation says "0.999 ETH left" for the operator; the agent's reply
+    # has no amount at all.
+    body = send(client, sign(value=2 * ETH))  # over the 1 ETH budget
+    assert body["error"]["message"] == "transaction rejected: off-mandate: over budget"
+    assert not any(ch.isdigit() for ch in json.dumps(body["error"]["data"]))
+    (record,) = audit_records()
+    assert "but only 1 ETH (native) is left" in record["explanation"]
+
+
+def test_allowed_transaction_is_charged_and_explained(
+    client: TestClient, node: FakeNode, mandate_id: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.INFO, logger="mandate_firewall"):
+        body = send(client, sign())
+    assert "result" in body
+    assert node.methods == ["eth_sendRawTransaction"]
+    (record,) = audit_records()
+    assert record["verdict"]["charges"] == [{"intent_index": 0, "amount": str(MILLI)}]
+    assert record["explanation"].startswith(f"ALLOWED  tx {record['hash']}\n")
+    assert record["explanation"].endswith("intent 1: 0.001 ETH (native), 0.999 ETH left")
+    assert writer().get(mandate_id).spent == (MILLI,)
+    assert f"allowed tx {record['hash']} under mandate {mandate_id}" in caplog.text
+
+
+def test_exact_budget_is_allowed_and_exhausts_the_mandate(
+    client: TestClient, node: FakeNode, simulator: FakeSimulator
+) -> None:
+    (mid,) = seed_store(
+        MANDATE_DB, native_transfer_mandate(CHAIN_ID, OTHER, budget=2 * MILLI, max_transactions=9)
+    )
+    for nonce in (0, 1):
+        assert "result" in send(client, sign_as(OTHER_KEY, nonce=nonce))
+    stored = writer().get(mid)
+    assert (stored.spent, stored.status) == ((2 * MILLI,), "exhausted")  # 7 slots left
+    assert audit_records()[-1]["explanation"].endswith("0 ETH left")
+
+    simulator.txs.clear()
+    body = send(client, sign_as(OTHER_KEY, nonce=2))
+    assert "is exhausted" in body["error"]["message"]
+    assert simulator.txs == []  # the gate stops it before simulation
+
+
+def test_over_budget_is_blocked_and_not_charged(client: TestClient, node: FakeNode) -> None:
+    (mid,) = seed_store(MANDATE_DB, native_transfer_mandate(CHAIN_ID, OTHER, budget=MILLI))
+    body = send(client, sign_as(OTHER_KEY, value=MILLI + 1))
+    assert body["error"]["data"]["violations"] == ["over_budget"]
+    assert node.calls == []
+    assert writer().get(mid).spent == (0,)
+
+
+def charge_during_simulation(simulator: FakeSimulator, mid: str, amount: int) -> None:
+    """Another transaction spends `amount` of intent 1 while this one is being
+    simulated: after the verifier's inputs were read, before its charge."""
+    original = simulator.simulate
+
+    async def charge_then_simulate(tx: DecodedTransaction) -> Effects:
+        store = writer()
+        store.record_transaction(mid, charges={0: amount})
+        store.close()
+        return await original(tx)
+
+    simulator.simulate = charge_then_simulate  # type: ignore[method-assign]
+
+
+def test_a_race_for_the_last_of_a_budget(
+    client: TestClient, node: FakeNode, simulator: FakeSimulator
+) -> None:
+    """The verifier saw 0.002 ETH left and allowed 0.001; meanwhile another
+    transaction spent 0.0015. The store's re-check decides: blocked."""
+    (mid,) = seed_store(MANDATE_DB, native_transfer_mandate(CHAIN_ID, OTHER, budget=2 * MILLI))
+    charge_during_simulation(simulator, mid, 3 * MILLI // 2)
+    body = send(client, sign_as(OTHER_KEY))
+    assert body["error"]["message"] == (
+        f"transaction rejected: mandate {mid}: intent 1 has too little budget left"
+    )
+    assert node.calls == []
+    (record,) = audit_records()
+    assert record["decision"] == "block"
+    assert record["verdict"]["decision"] == "allow"  # what the verifier saw
+    assert record["explanation"] is None  # nothing was charged, so nothing to show
+    assert writer().get(mid).spent == (3 * MILLI // 2,)
+
+
+def test_an_approval_is_rechecked_against_what_is_left(
+    client: TestClient, node: FakeNode, simulator: FakeSimulator
+) -> None:
+    """Rule 2.5 at the store: approving 100 USDC was within the budget when
+    verified, but a swap spent 50 of it in between."""
+    swap = SwapIntent(
+        kind="swap",
+        sell=AssetRef(chain_id=CHAIN_ID, address=USDC, decimals=6),
+        sell_budget=Budget(max=100 * 10**6, period=None),
+        buy=AssetRef(chain_id=CHAIN_ID, address=None, decimals=18),
+        min_buy_per_sell=Ratio(numerator=3 * 10**16, denominator=100 * 10**6),
+        venues=(ROUTER,),
+    )
+    mid = replace_mandate(MANDATE_DB, mandate_with(CHAIN_ID, SENDER, swap))
+    simulator.overrides = {
+        "token_approvals": (
+            TokenApproval(
+                token=USDC,
+                standard=TokenStandard.ERC20,
+                owner=SENDER,
+                spender=ROUTER,
+                amount=100 * 10**6,
+                log_index=0,
+            ),
+        ),
+    }
+    charge_during_simulation(simulator, mid, 50 * 10**6)
+    approve = "0x095ea7b3" + "00" * 12 + ROUTER[2:].lower() + f"{100 * 10**6:064x}"
+    body = send(client, sign(to=USDC, value=0, gas=60_000, data=approve))
+    assert "too little budget left for the approval" in body["error"]["message"]
+    assert node.calls == []
+
+
+def test_unlimited_approval_is_blocked(client: TestClient, simulator: FakeSimulator) -> None:
+    mid = replace_mandate(
+        MANDATE_DB, mandate_with(CHAIN_ID, SENDER, token_transfer(CHAIN_ID, USDC, 10**6))
+    )
+    simulator.overrides = {
+        "token_approvals": (
+            TokenApproval(
+                token=USDC,
+                standard=TokenStandard.ERC20,
+                owner=SENDER,
+                spender=THIEF,
+                amount=UINT256_MAX,
+                log_index=0,
+            ),
+        ),
+    }
+    body = send(client, sign(to=USDC, value=0, gas=60_000, data="0x095ea7b3"))
+    assert body["error"]["data"]["violations"] == ["unlimited_approval"]
+    assert writer().get(mid).transactions == 0
+
+
+def test_an_anomaly_escalates(
+    client: TestClient, node: FakeNode, simulator: FakeSimulator, mandate_id: str
+) -> None:
+    # ETH left the account in a way the call trace doesn't show.
+    simulator.overrides = {
+        "native_balance_changes": (NativeBalanceChange(address=SENDER, delta=-(2 * MILLI + GAS)),),
+    }
+    body = send(client, sign())
+    assert body["error"]["message"] == (
+        "transaction rejected: escalated: sender ETH balance change not explained by the trace"
+    )
+    assert body["error"]["data"] == {
+        "decision": "escalate",
+        "violations": [],
+        "anomalies": ["native_balance_unreconciled"],
+    }
+    assert node.calls == []
+    (record,) = audit_records()
+    assert record["decision"] == "escalate"
+    assert record["explanation"].startswith("ESCALATED (blocked, needs your attention)")
+    assert writer().get(mandate_id).transactions == 0
+
+
+def test_verifier_crash_blocks(
+    client: TestClient, node: FakeNode, monkeypatch: pytest.MonkeyPatch, mandate_id: str
+) -> None:
+    def crash(*args: Any) -> None:
+        raise RuntimeError("secret detail")
+
+    monkeypatch.setattr(app_module, "match", crash)
+    body = send(client, sign())
+    assert body["error"]["message"] == "transaction rejected: verification failed: internal error"
+    assert node.calls == []
+    assert writer().get(mandate_id).transactions == 0
+
+
+@pytest.mark.parametrize("to", [RECIPIENT, THIEF])  # the allow path and the refuse path
+def test_explanation_crash_blocks(
+    client: TestClient, node: FakeNode, monkeypatch: pytest.MonkeyPatch, to: str
+) -> None:
+    def crash(*args: Any, **kwargs: Any) -> None:
+        raise ValueError("the verdict names an intent the mandate doesn't have")
+
+    monkeypatch.setattr(app_module, "explain", crash)
+    body = send(client, sign(to=to))
+    assert body["error"]["message"] == "transaction rejected: verification failed: internal error"
+    assert node.calls == []
+
+
+# --- re-sends -----------------------------------------------------------------------
+
+
+def test_a_resend_is_forwarded_without_a_new_charge(
+    client: TestClient, node: FakeNode, simulator: FakeSimulator, mandate_id: str
+) -> None:
+    raw = sign()
+    first, again = send(client, raw), send(client, raw)
+    assert first["result"] == again["result"]
+    assert node.methods == ["eth_sendRawTransaction"] * 2
+    assert len(simulator.txs) == 1  # not simulated again
+    allowed, resent = audit_records()
+    assert (allowed["resend"], resent["resend"]) == (False, True)
+    assert (resent["decision"], resent["mandate_id"]) == ("allow", mandate_id)
+    assert resent["reason"] == "re-send of a transaction already charged"
+    stored = writer().get(mandate_id)
+    assert (stored.transactions, stored.spent) == (1, (MILLI,))
+
+
+def test_a_resend_of_the_transaction_that_used_the_mandate_up(
+    client: TestClient, node: FakeNode
+) -> None:
+    (mid,) = seed_store(MANDATE_DB, native_transfer_mandate(CHAIN_ID, OTHER, max_transactions=1))
+    raw = sign_as(OTHER_KEY)
+    send(client, raw)
+    assert writer().get(mid).status == "exhausted"
+    assert "result" in send(client, raw)
+    assert [r["resend"] for r in audit_records()] == [False, True]
+
+
+def test_a_resend_under_a_revoked_mandate_is_blocked(
+    client: TestClient, node: FakeNode, mandate_id: str
+) -> None:
+    raw = sign()
+    send(client, raw)
+    assert writer().revoke(mandate_id)
+    node.calls.clear()
+    body = send(client, raw)
+    reason = f"re-send of a transaction charged to mandate {mandate_id}, which is revoked"
+    assert body["error"]["message"] == f"transaction rejected: {reason}"
+    assert node.calls == []
+    assert audit_records()[-1]["mandate_id"] == mandate_id
+
+
+def test_a_resend_under_an_expired_mandate_is_blocked(
+    client: TestClient, node: FakeNode, mandate_id: str
+) -> None:
+    raw = sign()
+    send(client, raw)
+    proxy = client.app.state.proxy  # type: ignore[attr-defined]
+    proxy.mandates._clock = lambda: datetime.now(UTC) + timedelta(hours=1)
+    node.calls.clear()
+    body = send(client, raw)
+    assert body["error"]["message"].endswith("which is expired")
+    assert node.calls == []
+
+
+def test_a_previously_blocked_transaction_is_verified_again(
+    client: TestClient, simulator: FakeSimulator
+) -> None:
+    simulator.outcome = "revert"
+    raw = sign()
+    send(client, raw)
+    simulator.outcome = "success"
+    assert "result" in send(client, raw)  # never charged, so not a re-send
+    assert len(simulator.txs) == 2
+    assert [r["resend"] for r in audit_records()] == [False, False]
+
+
+# --- the registry -------------------------------------------------------------------
+
+
+def test_refuses_to_start_without_a_registry_for_the_chain(
+    node: FakeNode, mock_upstream: respx.MockRouter, tmp_path: Path, simulator: FakeSimulator
+) -> None:
+    empty = tmp_path / "registry"
+    empty.mkdir()
+    with pytest.raises(RegistryUnavailableError, match="no registry for chain 84532"):
+        with make_client(node, simulator, registry_path=empty):
+            pass
+    assert simulator.chain_id is None  # refused before the simulator started
+
+
+def test_refuses_to_start_with_an_invalid_registry(
+    node: FakeNode, mock_upstream: respx.MockRouter, tmp_path: Path
+) -> None:
+    (tmp_path / "registry").mkdir()
+    (tmp_path / "registry" / f"{CHAIN_ID}.json").write_text('{"schema_version": 1}')
+    with pytest.raises(RegistryUnavailableError, match="cannot load the registry"):
+        with make_client(node, registry_path=tmp_path / "registry"):
+            pass
+
+
+def test_a_charge_recorded_for_another_account_is_not_a_resend(
+    client: TestClient, node: FakeNode, simulator: FakeSimulator
+) -> None:
+    """The hash commits to the sender, so a charged row naming another
+    account's mandate means the store was edited: someone with write access
+    inserting rows (the table is append-only, not insert-proof) to let a
+    transaction skip verification as a "re-send"."""
+    (other_mid,) = seed_store(MANDATE_DB, native_transfer_mandate(CHAIN_ID, OTHER))
+    raw = sign(to=THIEF)  # SENDER's, and off-mandate
+    db = sqlite3.connect(MANDATE_DB, isolation_level=None)
+    db.execute(
+        "INSERT INTO charged VALUES (?, ?, ?)",
+        ("0x" + keccak(hexstr=raw).hex(), other_mid, "2026-11-08T00:00:00Z"),
+    )
+    db.close()
+    body = send(client, raw)
+    assert body["error"]["message"] == "transaction rejected: mandate store integrity failure"
+    assert node.calls == [] and simulator.txs == []

@@ -2,10 +2,11 @@
 
     mandate-firewall serve [--upstream URL] [--host H] [--port P]
                            [--audit-log PATH] [--mandate-db PATH]
-                           [--log-level LEVEL]
+                           [--registry DIR] [--log-level LEVEL]
     mandate-firewall mandate new ["instruction"] | --send AMOUNT SYMBOL --to WHO
                                  | --swap AMOUNT SYMBOL --for SYMBOL --via VENUE
     mandate-firewall mandate show ID | list | revoke ID
+    mandate-firewall alerts [--audit-log PATH] [--escalations] [--last N]
 
 Every flag overrides the matching environment variable (see .env.example),
 which overrides the default in config.Settings.
@@ -15,12 +16,15 @@ import argparse
 import ipaddress
 import logging
 import sys
+from pathlib import Path
 from typing import Any
 
 import uvicorn
 from pydantic import ValidationError
 
 from mandate_firewall import __version__
+from mandate_firewall.alerts import DEFAULT_LAST
+from mandate_firewall.alerts import run as show_alerts
 from mandate_firewall.config import Settings
 from mandate_firewall.proxy.app import create_app
 
@@ -37,6 +41,8 @@ def main(argv: list[str] | None = None) -> None:
         from mandate_firewall.capture.commands import run
 
         sys.exit(run(args))
+    elif args.command == "alerts":
+        sys.exit(alerts(args))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -74,6 +80,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="mandate store written by `mandate new` (env MANDATE_DB_PATH)",
     )
     serve_parser.add_argument(
+        "--registry",
+        dest="registry_path",
+        metavar="DIR",
+        help="directory with your own <chain_id>.json registry (env REGISTRY_PATH)",
+    )
+    serve_parser.add_argument(
         "--log-level",
         dest="log_level",
         type=str.upper,
@@ -81,6 +93,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="(env LOG_LEVEL)",
     )
     _add_mandate_parser(commands)
+
+    alerts_parser = commands.add_parser(
+        "alerts",
+        help="list blocked and escalated transactions from the audit log",
+        description="Show the firewall's blocks and escalations, oldest first, with the "
+        "explanation it wrote when it decided.",
+    )
+    alerts_parser.add_argument(
+        "--audit-log", dest="audit_log_path", metavar="PATH", help="(env AUDIT_LOG_PATH)"
+    )
+    alerts_parser.add_argument(
+        "--escalations", action="store_true", help="only escalations, not plain blocks"
+    )
+    alerts_parser.add_argument(
+        "--last",
+        type=int,
+        choices=range(1, 10_001),
+        metavar="1-10000",
+        default=DEFAULT_LAST,
+        help=f"how many to show (default {DEFAULT_LAST})",
+    )
     return parser
 
 
@@ -130,6 +163,19 @@ def _add_mandate_parser(commands: Any) -> None:
     actions.add_parser("list", help="list all mandates, newest first")
     revoke = actions.add_parser("revoke", help="revoke a mandate")
     revoke.add_argument("id", help="mandate id, or its first 8+ hex digits")
+
+
+def alerts(args: argparse.Namespace) -> int:
+    path = args.audit_log_path
+    if path is None:
+        try:
+            path = Settings().audit_log_path
+        except ValidationError:
+            print("mandate-firewall: invalid configuration; pass --audit-log", file=sys.stderr)
+            return 2
+    return show_alerts(
+        Path(path), sys.stdout, sys.stderr, escalations_only=args.escalations, last=args.last
+    )
 
 
 def build_settings(args: argparse.Namespace) -> Settings:

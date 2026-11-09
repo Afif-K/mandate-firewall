@@ -27,6 +27,7 @@ from tests.integration.conftest import (
     start_proxy,
     stop,
 )
+from tests.mandates import mandate_with, native_transfer_mandate, replace_mandate, token_transfer
 from tests.net import free_port
 
 pytestmark = pytest.mark.anvil
@@ -45,11 +46,25 @@ class Setup:
 
 @pytest.fixture(scope="module")
 def setup(anvil: Service, proxy: Proxy) -> Setup:
-    """Contracts are deployed on the upstream directly, not through the proxy."""
+    """Contracts are deployed on the upstream directly, not through the proxy.
+    The mandate names them, so what these tests send is on-mandate: only the
+    simulation (a revert, a lying token) decides."""
     token = deploy(anvil.url, ERC20)
     transact(anvil.url, ERC20, token, "mint", ALICE, 100_000_000)
     lying = deploy(anvil.url, LYING, THIEF)
     transact(anvil.url, LYING, lying, "mint", ALICE, 100)
+    chain_id = int(rpc_result(anvil.url, "eth_chainId"), 16)
+    eth = native_transfer_mandate(chain_id, ALICE).intents[0]
+    covers = mandate_with(
+        chain_id,
+        ALICE,
+        eth,
+        token_transfer(chain_id, token, 100_000_000),
+        token_transfer(chain_id, lying, 100),
+        minutes=24 * 60,
+        max_transactions=1000,
+    )
+    replace_mandate(proxy.mandate_db, covers)
     return Setup(anvil, proxy, token, lying)
 
 
@@ -151,15 +166,27 @@ def test_reverting_transaction_is_blocked_and_never_mined(setup: Setup) -> None:
     assert record["effects"]["revert_data"].startswith("0x4e487b71")  # Panic(uint256)
 
 
-def test_lying_token_is_forwarded_with_the_lie_on_record(setup: Setup) -> None:
-    """M2 makes no intent decisions: the lie is recorded, and M4 acts on it."""
+def test_lying_token_escalates_and_is_never_mined(setup: Setup) -> None:
+    """M2 recorded the lie and forwarded; M4 acts on it. The transfer is on
+    mandate (10 of the lying token to Bob), but its events disagree with its
+    storage, so nothing built from them can be trusted: escalate."""
     tx_hash, response = send_via_proxy(setup, setup.lying, LYING.call_data("transfer", BOB, 10))
-    assert response["result"] == tx_hash
-    checks = record_for(setup.proxy, tx_hash)["effects"]["token_state_checks"]
+    assert response["error"]["code"] == TRANSACTION_REJECTED
+    assert response["error"]["data"] == {
+        "decision": "escalate",
+        "violations": [],
+        "anomalies": ["inconsistent_token_state"],
+    }
+    assert rpc_result(setup.upstream.url, "eth_getTransactionByHash", [tx_hash]) is None
+    record = record_for(setup.proxy, tx_hash)
+    assert record["decision"] == "escalate"
+    assert record["mandate_transaction"] is None  # not charged
+    checks = record["effects"]["token_state_checks"]
     assert {(c["owner"], c["claimed"], c["consistent"]) for c in checks} == {
         (ALICE, "-10", True),
         (BOB, "10", False),  # the events said Bob got 10; he got nothing
     }
+    assert f"its events disagree with its balances for {BOB}" in record["explanation"]
 
 
 @pytest.mark.parametrize(

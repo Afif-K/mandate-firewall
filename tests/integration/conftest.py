@@ -13,6 +13,7 @@ from typing import Any
 import httpx
 import pytest
 
+from mandate_firewall.mandate.registry import RegistryError, load_registry
 from tests.mandates import native_transfer_mandate, seed_store
 from tests.net import free_port
 
@@ -120,6 +121,7 @@ def start_proxy(
                 chain_id, DEV_ACCOUNT_0, minutes=24 * 60, max_transactions=1000
             )
             seed_store(mandate_db, broad)
+    registry = registry_dir(int(rpc_result(upstream.url, "eth_chainId"), 16), workdir)
     argv = [
         sys.executable,
         "-m",
@@ -134,8 +136,34 @@ def start_proxy(
         "--mandate-db",
         str(mandate_db),
     ]
+    if registry is not None:
+        argv += ["--registry", str(registry)]
     service = start(name, argv, port, workdir, env)
     return Proxy(service.url, service.process, service.log, audit_log, mandate_db)
+
+
+def registry_dir(chain_id: int, workdir: Path) -> Path | None:
+    """Where the proxy finds a registry for `chain_id`: None for chains the
+    firewall ships one for, else a directory with a minimal one (native ETH,
+    no tokens or venues). Since M4 the proxy refuses to start without a
+    registry for its chain, and anvil's default chain (31337) has none."""
+    try:
+        load_registry(chain_id)
+        return None
+    except RegistryError:
+        pass
+    directory = workdir / "registry"
+    directory.mkdir(exist_ok=True)
+    minimal = {
+        "schema_version": 1,
+        "chain_id": chain_id,
+        "chain_name": f"local anvil (chain {chain_id})",
+        "native": {"symbol": "ETH", "decimals": 18},
+        "tokens": [],
+        "venues": [],
+    }
+    (directory / f"{chain_id}.json").write_text(json.dumps(minimal))
+    return directory
 
 
 @pytest.fixture(scope="module")

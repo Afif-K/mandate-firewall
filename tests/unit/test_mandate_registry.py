@@ -114,6 +114,10 @@ def test_lookups() -> None:
     assert registry.symbol_for(TOKEN_B.lower()) == "BBB"
     assert registry.symbol_for(None) == "ETH"
     assert registry.symbol_for(ROUTER) is None  # a venue isn't a token
+    assert registry.decimals_for(TOKEN_B.lower()) == 18
+    assert registry.decimals_for(TOKEN_A) == 6
+    assert registry.decimals_for(None) == 18
+    assert registry.decimals_for(ROUTER) is None
 
 
 @pytest.mark.parametrize("symbol", ["CCC", "", "AAA ", "ААА"])  # the last is Cyrillic

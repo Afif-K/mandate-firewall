@@ -37,13 +37,7 @@ def render(
         "",
     ]
     for number, intent in enumerate(mandate.intents, start=1):
-        if isinstance(intent, TransferIntent):
-            lines += [
-                f"  {number}. SEND at most {_amount(intent.budget.max, intent.asset, registry)}",
-                f"       to {intent.recipient}",
-            ]
-        else:
-            lines += _swap_lines(number, intent, registry)
+        lines += intent_lines(number, intent, registry)
         lines.append("")
     lines.append(
         f"  At most {mandate.limits.max_transactions} transaction"
@@ -60,10 +54,10 @@ def summary_line(mandate: Mandate, registry: Registry) -> str:
     parts = []
     for intent in mandate.intents:
         if isinstance(intent, TransferIntent):
-            amount = _amount(intent.budget.max, intent.asset, registry, with_address=False)
+            amount = amount_text(intent.budget.max, intent.asset, registry, with_address=False)
             parts.append(f"send ≤{amount} to {intent.recipient}")
         else:
-            sell = _amount(intent.sell_budget.max, intent.sell, registry, with_address=False)
+            sell = amount_text(intent.sell_budget.max, intent.sell, registry, with_address=False)
             parts.append(f"swap ≤{sell} for {_symbol(intent.buy, registry)}")
     return "; ".join(parts)
 
@@ -92,14 +86,27 @@ def safe_text(value: str, limit: int = 500) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
+def intent_lines(number: int, intent: TransferIntent | SwapIntent, registry: Registry) -> list[str]:
+    """The lines for one intent, numbered from 1. Shared with the verifier's
+    explanations (verify/explain.py), so "You asked" there is word for word
+    what the user confirmed here."""
+    if isinstance(intent, TransferIntent):
+        return [
+            f"  {number}. SEND at most {amount_text(intent.budget.max, intent.asset, registry)}",
+            f"       to {intent.recipient}",
+        ]
+    return _swap_lines(number, intent, registry)
+
+
 def _swap_lines(number: int, intent: SwapIntent, registry: Registry) -> list[str]:
+    sell = amount_text(intent.sell_budget.max, intent.sell, registry)
     lines = [
-        f"  {number}. SWAP sell at most {_amount(intent.sell_budget.max, intent.sell, registry)}",
-        f"       buy {_asset(intent.buy, registry)}",
+        f"  {number}. SWAP sell at most {sell}",
+        f"       buy {asset_text(intent.buy, registry)}",
         f"       minimum: {_minimum(intent.min_buy_per_sell, intent, registry)}",
         "       only via:",
     ]
-    lines += [f"         {_venue(address, registry)}" for address in intent.venues]
+    lines += [f"         {venue_text(address, registry)}" for address in intent.venues]
     return lines
 
 
@@ -116,14 +123,16 @@ def _minimum(ratio: Ratio | None, intent: SwapIntent, registry: Registry) -> str
     )
 
 
-def _amount(value: int, asset: AssetRef, registry: Registry, *, with_address: bool = True) -> str:
+def amount_text(
+    value: int, asset: AssetRef, registry: Registry, *, with_address: bool = True
+) -> str:
     text = f"{format_units(value, asset.decimals)} {_symbol(asset, registry)}"
     if with_address:
         text += f" ({_where(asset)})"
     return text
 
 
-def _asset(asset: AssetRef, registry: Registry) -> str:
+def asset_text(asset: AssetRef, registry: Registry) -> str:
     return f"{_symbol(asset, registry)} ({_where(asset)})"
 
 
@@ -136,7 +145,7 @@ def _symbol(asset: AssetRef, registry: Registry) -> str:
     return registry.symbol_for(asset.address) or "UNREGISTERED TOKEN"
 
 
-def _venue(address: str, registry: Registry) -> str:
+def venue_text(address: str, registry: Registry) -> str:
     for venue in registry.venues:
         for contract in venue.contracts:
             if contract.address == address:

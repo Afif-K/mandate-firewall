@@ -161,6 +161,18 @@ class Registry(_Strict):
                 return token.symbol
         return None
 
+    def decimals_for(self, address: str | None) -> int | None:
+        """The decimals for an asset address (None = native), or None if the
+        address isn't a registered token. Never a token's own decimals():
+        its deployer chooses that too, and a wrong one misstates amounts."""
+        if address is None:
+            return self.native.decimals
+        checksummed = to_checksum_address(address)
+        for token in self.tokens:
+            if token.address == checksummed:
+                return token.decimals
+        return None
+
 
 def load_registry(chain_id: int, directory: Path | None = None) -> Registry:
     """The registry for a chain: from `directory` if given, else the shipped

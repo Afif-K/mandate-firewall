@@ -1,6 +1,6 @@
 # M4 plan: the verifier
 
-Status: **approved 2026-11-07.**
+Status: **approved 2026-11-07; done 2026-11-10** (commits 0–7, 9, 10; commit 8 deferred, see §9). Corrections made during implementation are marked *Changed in commit N*.
 
 ## Decisions (agreed 2026-11-07)
 
@@ -51,7 +51,7 @@ Rules, applied to every transaction:
    - An outflow of S counts toward the swap **only if `tx.to ∈ V`**. This corrects a line in the M3 table (docs/m3-plan.md §1): the outflow's *recipient* is not checked against the venues. With SwapRouter02, the principal's USDC goes straight to the **pool** (the router calls `transferFrom(principal → pool)` in the swap callback), not to the router. "The money must go to a venue" would block every real swap. The check is that the principal *called* a venue.
    - S sent to a venue by a direct token `transfer` (with `tx.to` = the token) is a violation. Tokens sitting in the router outside a swap can be swept by anyone.
    - The charge is the **net** outflow of S in this transaction, so router refunds count back.
-   - **Ratio minimum**, integers only, checked per transaction: `bought × denominator ≥ sold × numerator`, where `bought` is the principal's net inflow of B. Example: "at least 0.03 WETH for 100 USDC" is `Ratio(3·10^16, 10^8)`. A swap that sells 10^8 base units and receives 2.99·10^16 fails, because 2.99·10^16 × 10^8 < 10^8 × 3·10^16. Receiving exactly 3·10^16 passes: the boundary is inclusive. The check is per transaction, not cumulative, because a cumulative check would let one good fill pay for a bad one.
+   - **Ratio minimum**, integers only, checked per transaction: `bought × denominator ≥ sold × numerator`, where `bought` is the principal's **gross** inflow of B. *Changed in commit 3* (the plan said net): if some of B leaves again in the same transaction, that outflow is matched (and charged, or refused) on its own under rule 6, like any other outflow, so netting it here would count it twice. Example: "at least 0.03 WETH for 100 USDC" is `Ratio(3·10^16, 10^8)`. A swap that sells 10^8 base units and receives 2.99·10^16 fails, because 2.99·10^16 × 10^8 < 10^8 × 3·10^16. Receiving exactly 3·10^16 passes: the boundary is inclusive. The check is per transaction, not cumulative, because a cumulative check would let one good fill pay for a bad one.
    - **Something must arrive:** `bought > 0` whenever `sold > 0`, even with no minimum (the implicit "bought asset arrives at the principal" rule from M3). This catches the headline attack, a real Uniswap swap with `recipient = attacker`: the principal sells 100 USDC and gets 0 WETH.
    - If the sell assets of two different swap intents leave in one transaction, that's a violation: it's ambiguous which budget is spent.
 5. **Approvals (enablers).** An ERC-20 approval by the principal is allowed only if the token is a swap intent's sell asset, the spender is one of that intent's venues, the amount isn't `2^256−1`, and the amount is at most the intent's **remaining** budget after this transaction's charges. An approval to 0 (a revoke) is always allowed. ERC-721 approvals and `ApprovalForAll(approved=true)` by the principal are always violations.
@@ -118,7 +118,7 @@ Why no LLM in the proxy:
 
 Rule 2.4 makes a swap **with** a minimum safe against value extraction. A swap **without** one isn't. SwapRouter02 has `multicall`, `pull` and `sweepToken`, so an injected agent can `pull(100 USDC)`, swap 1 wei of it for WETH to the principal, and `sweepToken(rest, attacker)`. The principal "sold 100 USDC and received WETH" through the right venue, and every rule passes.
 
-So commit 9 changes the compiler: a swap without a minimum becomes a question ("at least how much WETH for 100 USDC?"), not a note, and the structured path requires `--min`. Mandates already stored without a minimum keep working under the `bought > 0` rule, and THREAT_MODEL.md documents the gap.
+So commit 9 changes the compiler: a swap without a minimum becomes a question ("at least how much WETH for 100 USDC?"), not a note, and the structured path requires `--min-out` (the existing flag; *changed in commit 9*, the plan said `--min`). Mandates already stored without a minimum keep working under the `bought > 0` rule, and THREAT_MODEL.md documents the gap.
 
 ## 7. Demo: step 6 becomes a block (`scripts/demo_m4.sh`)
 
@@ -135,7 +135,8 @@ The same skeleton as `demo_m3.sh`: its own anvil (chain 84532) and firewall on s
    - (b) `approve(router, 100)` → allowed;
    - (c) swap with `recipient = thief` → blocked, nothing arrived. This is **the within-policy, off-mandate attack**: right router, right token, right amount;
    - (d) swap at a bad rate → blocked, below the minimum;
-   - (e) honest swap → allowed.
+   - (e) the `pull` + `sweep` drain of §6 in one `multicall` → blocked, below the minimum (*added in commit 10*);
+   - (f) honest swap → allowed.
 8. `mandate-firewall alerts` lists the blocks with their explanations.
 
 ## 8. What M4 does NOT solve (goes into THREAT_MODEL.md)
@@ -166,8 +167,8 @@ Each commit: `uv run ruff check .`, `uv run pytest`, and `uv run pytest -m anvil
 5. **Deterministic explanations** (`verify/explain.py`, reusing `render.py`). *Verify:* golden-string tests for each violation and anomaly code; full addresses; exact amounts; `UNREGISTERED` labels; a test that the agent-facing message contains no mandate values.
 6. **`MockRouter` test contract** (`tests/fixtures/contracts/src/MockRouter.sol`, artifact via `build.py`). *Verify:* the artifact reproducibility test; an integration test that it swaps, pulls and sweeps.
 7. **Proxy wiring**: the registry loads at startup (`REGISTRY_PATH` in `Settings`; refuse to start if it's invalid), verification after simulation and before the charge, escalate handling, re-send handling, the `alerts` CLI. M2 tests that relied on "anything goes" (such as `test_lying_token_is_forwarded_with_the_lie_on_record`) flip to expecting escalate or block, which is the point of M4. Their mandate fixtures are adjusted where they test something else. *Verify:* integration tests: off-mandate ETH blocked, never mined and not charged; exact and over budget; a race for the last budget; MockRouter scenarios a–e; the lying token escalates; a re-send isn't charged twice. Mutation pass on the wiring (verifier skipped, charge before verify, wrong budget column).
-8. **(Optional, last if time allows) `mandate-firewall explain`** (capture side). *Verify:* the whitelisting serializer test (a sentinel in log data and revert data never reaches the prompt); the import-boundary tests still pass; one manual live run.
-9. **Compiler: a swap minimum is required** (Decision 5). *Verify:* the compile table updated; the structured path needs `--min`; stored mandates without a minimum still load.
+8. **(Optional; deferred, not built in M4) `mandate-firewall explain`** (capture side). *Verify:* the whitelisting serializer test (a sentinel in log data and revert data never reaches the prompt); the import-boundary tests still pass; one manual live run.
+9. **Compiler: a swap minimum is required** (Decision 5). *Verify:* the compile table updated; the structured path needs `--min-out`; stored mandates without a minimum still load.
 10. **Docs and demo**: THREAT_MODEL.md (§8, new protections 23+, M3's "Effects aren't checked" section rewritten), README, CLAUDE.md (M4 done), `scripts/demo_m4.sh`, and `demo_m3.sh` step 6 reworded (on M4 code it blocks). *Verify:* run `demo_m4.sh` end to end in a terminal; the full test suite; ruff.
 
-Commits 8 and 9 may swap order: 9 is required, 8 is optional.
+Commits 8 and 9 may swap order: 9 is required, 8 is optional. *Outcome:* 9 was done after 7, then 10; 8 was skipped and stays optional for later.

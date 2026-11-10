@@ -4,19 +4,36 @@ Open-source, wallet-agnostic firewall for AI agents that transact onchain.
 It checks each transaction an agent sends against the user's original instruction
 (the *mandate*) and blocks anything that doesn't match.
 
-**Status: Milestone 3 complete.** Today this is a JSON-RPC proxy with a strict
-default-deny front door. You lock a *mandate* (what the agent may do, for how
-long, in how many transactions) with the capture CLI, before the agent starts.
-The proxy blocks every transaction from an account without an active mandate.
-It runs every other transaction on a private fork of the chain *before*
-forwarding it, records what the transaction actually did (ETH and token
-movements, approvals, every contract call), and blocks it if it can't be
-simulated cleanly or would revert.
+**Status: Milestone 4 complete.** Today this is a JSON-RPC proxy with a strict
+default-deny front door. You lock a *mandate* (what the agent may send or swap,
+to whom, via which venue, how much in total, for how long, in how many
+transactions) with the capture CLI, before the agent starts. The proxy runs
+every transaction on a private fork of the chain *before* forwarding it, and a
+deterministic matcher compares what the transaction actually did (ETH and token
+movements, approvals, contracts called) with the mandate:
 
-**It does not yet compare a transaction with its mandate** (that's M4). While
-an account has an active mandate, an injected transfer to an attacker that
-simulates fine is still forwarded, up to the mandate's transaction cap and
-until it expires, with its effects on record. Read
+```
+BLOCKED  tx 0xa679…8640
+  under mandate 0x647d…b7f9
+You asked:
+  1. SEND at most 0.01 ETH (native)
+       to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8
+       left before this transaction: 0.006 ETH
+This transaction:
+  sends 0.001 ETH (native) to 0x000000000000000000000000000000000000dEaD
+Why:
+  - it sends 0.001 ETH (native) to 0x000000000000000000000000000000000000dEaD, a recipient your mandate doesn't name
+Nothing was charged.
+```
+
+It catches transactions that pass every spend limit and allowlist but aren't
+what you asked for: a swap through the right router, of the right token, within
+budget, whose output goes to an attacker. It blocks off-mandate transactions,
+escalates ones it can't interpret (blocks them with a louder alert), and
+charges allowed ones against the mandate's budgets. No LLM decides anything.
+
+Verification is only as good as the simulation: a contract that behaves in
+simulation and steals on chain still gets through. Read
 [THREAT_MODEL.md](THREAT_MODEL.md) for exactly what it does and doesn't protect
 against. Use testnets and local forks only.
 
@@ -82,7 +99,14 @@ uv run mandate-firewall mandate new "send 0.01 ETH to 0x70997970C51812dc3A010C7d
 > **Privacy:** with an instruction in words, its full text, including amounts
 > and addresses, is sent to the LLM provider (`LLM_BASE_URL`, api.anthropic.com
 > by default). The CLI says so before it sends anything. The structured flags
-> (`--send … --to …`, `--swap … --for … --via …`) use no LLM.
+> (`--send … --to …`, `--swap … --for … --via … --min-out …`) use no LLM.
+
+A swap needs a minimum, the least you'll accept back. Without one, an agent
+could sell your tokens through the right router and receive almost nothing:
+
+```bash
+uv run mandate-firewall mandate new --swap 100 USDC --for WETH --via uniswap --min-out 0.03
+```
 
 Manage mandates with `mandate list`, `mandate show <id>` and
 `mandate revoke <id>` (an 8+ digit prefix of the id works). Revoking takes
@@ -109,8 +133,14 @@ Try it with `cast` (terminal 4). The keys are anvil's public dev accounts 0 and 
 KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
 FW=http://127.0.0.1:8546
 
-# The transfer you asked for: simulated, charged to the mandate, audited, forwarded, mined.
-cast send --rpc-url $FW --private-key $KEY 0x70997970C51812dc3A010C7d01b50e0d17dc79C8 --value 0.01ether
+# The transfer you asked for: simulated, verified, charged to the mandate, audited, forwarded, mined.
+cast send --rpc-url $FW --private-key $KEY 0x70997970C51812dc3A010C7d01b50e0d17dc79C8 --value 0.004ether
+
+# The same account paying someone else: blocked (-32003, "off-mandate: ... recipient not in mandate").
+cast send --rpc-url $FW --private-key $KEY 0x000000000000000000000000000000000000dEaD --value 0.001ether
+
+# More than the 0.006 ETH left: blocked (-32003, "off-mandate: over budget").
+cast send --rpc-url $FW --private-key $KEY 0x70997970C51812dc3A010C7d01b50e0d17dc79C8 --value 0.007ether
 
 # An account with no mandate: blocked (-32003), never simulated, never reaches the node.
 cast send --rpc-url $FW --private-key 0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a \
@@ -124,41 +154,61 @@ cast rpc --rpc-url $FW anvil_setBalance 0x70997970C51812dc3A010C7d01b50e0d17dc79
 cast rpc --rpc-url $FW mandate_new '{}'
 ```
 
-Until M4, a transfer from account 0 to *any* address would also go through
-while its mandate is active: the gate checks that a mandate exists and has
-transactions left, not what the transaction does.
+The agent's error says *why* (as a phrase and as codes in `error.data`, such
+as `wrong_recipient` or `over_budget`) but never your budget, what's left or
+your swap minimum: an injected agent could use those.
 
-**5. Read the audit log.** One JSON line per transaction, allowed or blocked.
-Each names the mandate it was checked against, and allowed ones say which of
-the mandate's transactions they were. Simulated ones carry their effects (a
-transaction blocked before simulation, like the no-mandate one, has none):
+**5. Read the alerts and the audit log.** Blocked and escalated transactions
+are listed with their full "You asked / This transaction" explanation. They are
+never held for approval: if one surprises you, revoke the mandate or lock a new
+one.
 
 ```bash
-tail -n 3 logs/audit.jsonl | jq '{decision, reason, mandate_id, mandate_transaction, to, value}'
-tail -n 2 logs/audit.jsonl | jq 'select(.effects) | .effects | {status, native_balance_changes, token_transfers}'
+uv run mandate-firewall alerts               # --escalations for anomalies only, --last N
 ```
+
+The audit log has one JSON line per transaction, allowed or blocked. Each names
+the mandate it was checked against. Verified ones carry the effects, the
+verdict (decision, violations, anomalies, charges) and the explanation:
+
+```bash
+tail -n 3 logs/audit.jsonl | jq '{decision, reason, mandate_id, mandate_transaction, violations: [.verdict.violations[]?.code]}'
+tail -n 1 logs/audit.jsonl | jq -r .explanation
+```
+
+The audit log contains your mandate's values (budgets, minimums) and signed
+transactions: the agent must not be able to read it.
 
 Integers (`value`, balance changes, token amounts, gas) are decimal strings,
 because 256-bit numbers don't survive JSON parsers that use floats.
 
-**6. The demos.** [`scripts/demo_m3.sh`](scripts/demo_m3.sh) needs nothing
+**6. The demos.** [`scripts/demo_m4.sh`](scripts/demo_m4.sh) needs nothing
 running: it starts its own anvil and firewall on spare ports, in a temporary
-directory it deletes at the end. In ten steps, pausing between each, it shows:
-the firewall refusing to start without a store, you locking a mandate, an
-account without one blocked, the transaction you asked for allowed, **the M3
-gap** (an off-mandate transfer allowed too), the transaction cap, a live
-revoke, the missing mandate methods, and a tampered store row. You type `yes`
-twice.
+directory it deletes at the end, pausing between steps. It locks "at most 0.01
+ETH to Bob" and shows a payment allowed and charged, a transfer to another
+address blocked, an over-budget payment blocked, and the exact rest of the
+budget allowed (the mandate is then used up). Then, on a mock router shaped
+like Uniswap's SwapRouter02, it locks "swap 100 mUSD for at least 0.03 mETH"
+and shows an unlimited approval blocked, an exact approval allowed, **a swap
+whose output goes to an attacker blocked**, a manipulated price blocked, a
+`pull` + `sweep` drain blocked, and the honest swap allowed. It ends with
+`mandate-firewall alerts`. You type `yes` twice.
 
 ```bash
-scripts/demo_m3.sh
+scripts/demo_m4.sh
 ```
 
-[`scripts/demo_m2.sh`](scripts/demo_m2.sh) shows simulation: an ERC-20 transfer
-checked against the token's storage, a reverting transfer that's blocked, a token
-whose events lie, and the simulator being killed and restarted. Run it against
-the anvil and firewall from steps 1-3, after locking a mandate with
-`--max-transactions 10` (it sends five transactions).
+[`scripts/demo_m3.sh`](scripts/demo_m3.sh) is self-contained too. It shows
+mandates: the firewall refusing to start without a store, an account without a
+mandate blocked, the transaction cap, a live revoke, the missing mandate
+methods, and a tampered store row.
+
+[`scripts/demo_m2.sh`](scripts/demo_m2.sh) showed simulation on M2 code: an
+ERC-20 transfer checked against the token's storage, a reverting transfer that's
+blocked, a token whose events lie, and the simulator being killed and restarted.
+Its "Expect" lines describe M2. On M4 code its token transfers are blocked,
+because the token it deploys isn't in the registry or in any mandate, and the
+lying token escalates. It runs against the anvil and firewall from steps 1-3.
 
 ```bash
 scripts/demo_m2.sh
@@ -175,7 +225,8 @@ Flags override environment variables (or a `.env` file; see
 | `--host` | `PROXY_HOST` | `127.0.0.1` | The proxy has no authentication; keep it on loopback. |
 | `--port` | `PROXY_PORT` | `8546` | |
 | `--audit-log` | `AUDIT_LOG_PATH` | `logs/audit.jsonl` | Created with mode 0600: it contains signed transactions. |
-| `--mandate-db` | `MANDATE_DB_PATH` | `state/mandates.db` | The mandate store. The firewall refuses to start without it and only ever writes transaction counters to it. |
+| `--mandate-db` | `MANDATE_DB_PATH` | `state/mandates.db` | The mandate store. The firewall refuses to start without it and only ever writes transaction counters and budget spending to it. |
+| `--registry` | `REGISTRY_PATH` | (shipped) | A directory with your own `<chain_id>.json` token and venue registry. The firewall refuses to start without a valid registry for the upstream's chain. |
 | `--log-level` | `LOG_LEVEL` | `INFO` | `DEBUG` also logs every forwarded read method. |
 | | `ALLOW_LEGACY_UNPROTECTED` | `false` | Allow pre-EIP-155 transactions (replayable on any chain). |
 | | `ANVIL_PATH` | `anvil` | The anvil binary for the simulation fork: a name on `PATH` or a path. |

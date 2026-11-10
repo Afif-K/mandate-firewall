@@ -1,6 +1,6 @@
 # Threat model
 
-Status: **beta, Milestone 3.** This document describes what the code in this
+Status: **beta, Milestone 4.** This document describes what the code in this
 repository does today, not what the project plans to do. It is updated with
 every milestone. If you find a gap that isn't listed here, please open an issue.
 
@@ -16,15 +16,23 @@ project is to check each transaction against the user's own instruction, the
 M1 built the choke point: a JSON-RPC proxy that sees every transaction the
 agent sends through it. M2 added simulation: every transaction is run on a
 private fork of the chain before it's forwarded, and what it actually did
-(its *effects*) is recorded. M3 adds mandates: the user locks an instruction
+(its *effects*) is recorded. M3 added mandates: the user locks an instruction
 with the capture CLI, and the proxy blocks every transaction from an account
 that has no confirmed, unexpired mandate with transactions left.
 
-**Milestone 3 does not compare a transaction with its mandate.** While an
-account has an active mandate, any transaction from it that simulates
-cleanly is forwarded, whatever it does, up to the mandate's transaction cap
-and until it expires. Checking effects against the mandate is M4. See
-"Effects aren't checked against the mandate" below.
+M4 adds verification. A deterministic matcher compares each transaction's
+simulated effects with its mandate: where money goes, how much of each
+budget is left, which contracts are called, what comes back from a swap,
+and which approvals are given. It allows the transaction, blocks it, or
+escalates it (blocks it and raises an alert) when the effects contain
+something it can't interpret. No LLM takes part in that decision. This is
+what catches the *within-policy, off-mandate* transaction: a swap through
+the right router, of the right token, within budget, whose output goes to
+an attacker.
+
+Verification is only as good as the effects it is given. Effects come from
+a simulation, and a simulation can differ from what happens on chain. See
+"Effects are only as true as the simulation" below.
 
 ## Actors and trust
 
@@ -35,7 +43,8 @@ and until it expires. Checking effects against the mandate is M4. See
 | The firewall's OS user | Yes | Owns the mandate store (`0600` in a `0700` directory). **Whoever can run as this user can create mandates.** See "Same-host compromise". |
 | Capture LLM (optional) | **No** | Parses the instruction into a draft. Its output is checked like untrusted input: every value must appear in the user's words, and the user confirms the result. It never sees agent content and never decides on transactions. |
 | LLM provider | Partly | Receives the instruction text when the LLM path is used. Not involved in transaction decisions. |
-| Token and venue registry | Yes | Shipped per chain, or replaced by the operator (`REGISTRY_PATH`). Maps symbols to addresses. A wrong entry makes a wrong mandate. |
+| Token and venue registry | Yes | Shipped per chain, or replaced by the operator (`REGISTRY_PATH`). Maps symbols to addresses. A wrong entry makes a wrong mandate, and since M4 every contract a venue lists is trusted to execute swaps honestly. |
+| Verifier (matcher) | Yes | Deterministic code in the proxy. Sees the mandate and the effects (hex, addresses and integers only), never agent text, and has no LLM. |
 | Agent | **No** | Assumed to be prompt-injected at any moment. It holds or controls its own signing key. |
 | Content the agent reads | **No** | The source of injections. |
 | Contracts the transaction touches | **No** | Including token contracts: their events, return values and revert messages are attacker-controlled. |
@@ -108,7 +117,7 @@ Each item has tests under `tests/`.
     and records whether the change matches what the events claim. It does the
     same for ERC-20 allowances. A token that debits you correctly but credits
     someone other than the named recipient shows up as `consistent: false`.
-    (M2 records this. Blocking on it is M4's job.)
+    Since M4, an inconsistent check escalates the transaction (item 28).
 13. **Attacker-chosen text in effects.** Effects contain no token names,
     symbols or revert messages. anvil decodes revert reasons into text, and
     those are dropped. Revert data is kept as hex. Every string field in the
@@ -188,30 +197,161 @@ Each item has tests under `tests/`.
     capture code. The key goes into one HTTP header. Errors carry only an
     error type, never the API's message or the key.
 
+### Verification (Milestone 4)
+
+The proxy now runs: decode, mandate lookup, simulate, **verify**, charge,
+audit, forward. The rules are in `src/mandate_firewall/verify/matcher.py`
+and docs/m4-plan.md §2–§4.
+
+23. **Money going somewhere the mandate doesn't name.** The effects are
+    turned into the principal's own *flows*: every ETH and token movement
+    into or out of the agent's account, with its counterparty. Each outflow
+    must be covered by an intent: a transfer of asset A to recipient R
+    matches only the transfer intent for exactly (A, R). An outflow of any
+    asset no intent covers (another token, an NFT, ETH under a token-only
+    mandate) is blocked. Inflows are always fine. This closes M3's main
+    gap: "pay Bob" no longer lets the agent pay the attacker.
+24. **Calling contracts the mandate doesn't name.** The transaction's
+    top-level target must be named by the mandate: the token of a token
+    transfer, the recipient of an ETH transfer, a swap's venue, or a swap's
+    sell token (to approve the venue). Creating a contract and calling the
+    agent's own account are blocked. ETH sent to a recipient must carry no
+    calldata: "send ETH to X" isn't "call X". This bounds harmful changes
+    that move no tokens at all, such as setting a governance delegate or
+    transferring a contract's ownership.
+25. **Spending more than the budget, over several transactions.** Each
+    intent has a budget, and a ledger records how much of it forwarded
+    transactions have spent. A transfer is charged its gross outflow, a swap
+    its net sell outflow. The store re-checks and charges inside one SQLite
+    transaction (`BEGIN IMMEDIATE`), so two transactions racing for the last
+    of a budget can't both get it. Amounts are uint256, stored as 32-byte
+    big-endian BLOBs (SQLite integers are 64-bit), and a trigger refuses any
+    decrease. A mandate whose budgets are all spent is exhausted, even with
+    transactions left. Blocked transactions are never charged.
+26. **The within-policy, off-mandate swap.** A swap's sell outflow counts
+    only when the transaction called one of the swap's venues. Then
+    something of the bought asset must arrive at the agent's account, and
+    with a minimum, `bought × denominator ≥ sold × numerator`, checked per
+    transaction with integers only. That blocks a real swap through the
+    right router with `recipient = attacker` (nothing arrived), a swap at a
+    manipulated price (below the minimum), and the `pull` + `sweepToken`
+    drain (the little that arrived is far below the minimum for all that
+    left). Sending the sell token to the router by direct `transfer` is
+    blocked (anyone can sweep it), and so is a transaction that spends two
+    swap intents' sell assets at once (whose budget would it be?).
+    `scripts/demo_m4.sh` step 7 shows each case live.
+27. **Approvals that outlive or exceed the mandate.** An ERC-20 approval by
+    the agent is allowed only for a swap's sell token, to one of that swap's
+    venues, not unlimited (`2^256−1`), and at most what is left of the swap's
+    budget after this transaction's own charges. Revoking (approving 0) is
+    always allowed. NFT approvals and `ApprovalForAll(true)` are always
+    blocked.
+28. **Effects the firewall can't interpret.** These *escalate*: the
+    transaction is blocked with a louder alert. Cases: a token whose events
+    disagree with its storage; an undecoded event that mentions the agent's
+    address (an ERC-1155 transfer, a Permit2 approval, a WETH `Withdrawal`);
+    ETH arithmetic that doesn't reconcile with the measured balance; the
+    agent's account calling something below the top frame (an EIP-7702
+    delegation, for instance); and any contract created anywhere in the
+    call tree. A short list of known harmless events (the Uniswap V3 pool's
+    `Swap`, WETH's `Deposit`) is ignored. That list can only suppress an
+    escalation; it never authorizes an outflow.
+29. **A bug in the verifier allowing a transaction.** The matcher is pure
+    (no I/O, no clock, no LLM). If it or the explainer raises, the
+    transaction is blocked as "verification failed: internal error". There
+    is no setting that turns verification off.
+30. **Teaching the agent the mandate.** The agent gets `-32003` with fixed
+    phrases and violation codes in `error.data` (`wrong_recipient`,
+    `over_budget`, `below_minimum`…), and never mandate values: no budgets,
+    remaining amounts or swap minimums. An injected agent that learned the
+    minimum could set the price to exactly that floor.
+31. **Explanations that can be wrong or injected.** The operator's "You
+    asked / This transaction" diff is rendered by templates from the
+    structured verdict. It uses registry names, full addresses and exact
+    integer amounts, and labels unregistered tokens as `UNREGISTERED TOKEN
+    0x…`. No LLM writes it, and no attacker-chosen text (token names, revert
+    strings) reaches it. It goes to the audit record, the operator log and
+    `mandate-firewall alerts`.
+32. **Swap mandates with no price floor.** Since M4, capture requires a
+    minimum for every swap. The compiler asks for one ("at least how much
+    WETH must come back for 100 USDC?"), and `--swap` without `--min-out`
+    is refused. (Mandates stored earlier without one: see below.)
+33. **Re-sends charged twice.** Agents retry. Sending the same signed bytes
+    again would be simulated and charged again, so the hashes of charged
+    transactions are recorded. A re-send under an active or exhausted
+    mandate is forwarded without a new charge and audited as `resend`.
+    Identical bytes can be mined only once, so there is nothing new to
+    check. Under a revoked or expired mandate a re-send is blocked.
+34. **Starting without a registry.** Verification and explanations resolve
+    names through the registry, so the proxy refuses to start if the
+    registry for the upstream's chain is missing or invalid.
+
 ## What it does NOT protect against
 
-### Effects aren't checked against the mandate (still the main gap)
-**M3 checks that a mandate exists, not that the transaction matches it.**
-Suppose the user locks "send 0.01 ETH to Bob, at most 2 transactions". An
-injected agent then sends 0.01 ETH to the attacker instead. That transaction
-is well-formed, for the right chain, simulates cleanly, and comes from an
-account with an active mandate, so it is **forwarded** and charged as the
-mandate's next transaction. The audit record shows exactly where the ETH
-went, but nothing compared it with the mandate. The same holds for any
-token, amount, recipient, approval or contract call. M3 narrows the window:
-a confirmed mandate must exist, be unexpired (30 minutes by default, 24
-hours at most) and have transactions left. It doesn't close it.
-Verification (M4) closes it: the deterministic matcher compares effects
-with the mandate's budgets, recipients and venues. `scripts/demo_m3.sh`
-shows this gap on purpose (step 6).
+### Effects are only as true as the simulation (now the main gap)
+M4 compares a transaction's *simulated* effects with the mandate. Everything
+under "Simulation can differ from what happens on chain" below passes
+straight through the verifier: state that changes between simulation and
+inclusion, contracts that behave differently at the real block's timestamp,
+and contracts that detect the simulation. A contract that pays Bob in
+simulation and the attacker on chain gets an "allow". Swap minimums bound
+the price-based variants of this, and nothing bounds the rest yet.
+
+(Through M3, effects weren't compared with the mandate at all. An injected
+transfer to an attacker from an account with an active mandate was
+forwarded. `scripts/demo_m3.sh` step 6 showed that gap; on M4 code it shows
+the block.)
+
+### Stored swap mandates without a minimum
+Capture requires a minimum since M4, but mandates locked earlier without one
+stay valid: a mandate's id is the hash of its content, so it can't be
+amended. For them only `bought > 0` holds. An injected agent can use router
+features the mandate doesn't model (SwapRouter02's `multicall` with `pull`
+and `sweepToken`) to swap 1 unit to the agent and sweep the rest to itself,
+and every rule passes. `mandate show` prints `minimum: NONE ⚠` for them.
+Revoke them and lock a new one with a minimum.
+
+### A minimum is a floor, not a fair price
+The verifier checks that a swap returns at least the minimum the user typed.
+An MEV bot or a manipulated pool can still push the fill down to exactly
+that floor. The minimum is only as good as the number the user chose.
+
+### Residual allowances
+A partly used approval stays in place after the mandate ends: approve 100
+USDC, swap 40, and the router can still pull 60. It's bounded by the budget
+and goes only to a registry venue, but nothing revokes it.
+
+### Event-less movements and hidden mentions
+Token flows come from `Transfer` events checked against `balanceOf`. Not
+seen: a token outside the registry that moves balances without emitting
+events; an undecoded event that mentions the agent only in packed or
+unaligned data (escalation looks for its address as a 32-byte word); and
+state changes at an allowed target that emit no events and move no value.
+Rule 24 (allowed targets) bounds where such a change can happen.
+
+### Escalation isn't approval
+An escalated transaction is blocked, exactly like a blocked one, and can't
+be released later. A person acts on the mandate instead: revoke it, or lock
+a new one (for example after adding a missing venue to the registry). That
+avoids a per-transaction approval queue an attacker could train someone to
+click through, and forwarding stale signed bytes later. Alerts reach only
+the audit log, a WARNING in the operator log and `mandate-firewall alerts`.
+There are no push notifications yet (Slack, Telegram and webhooks are M6),
+so an escalation nobody reads is just a block.
+
+### The block reason is an oracle
+The agent learns *why* it was blocked (violation codes, never mandate
+values). An injected agent can probe the rules by sending variations and
+reading the codes. There's no rate limit or circuit breaker that stops an
+agent after repeated blocks.
 
 ### Confirmation fatigue and misreads
 The user confirms a summary, and people confirm without reading,
 especially when asked often. A mistyped amount or a look-alike address in
 the instruction is grounded (it does appear in the user's words), so the
 compiler accepts it, and the summary shows it faithfully. Full addresses,
-registry names and a warning when a swap has no minimum help. They don't
-make a person read. Grounding has one more limit: it proves a value appears
+registry names and a required swap minimum help. They don't make a person
+read. Grounding has one more limit: it proves a value appears
 in the instruction, not that it's attached to the right thing. In "send 5
 USDC to 0xB0b…, not 500", an extracted 500 is grounded. Again only the
 confirmation catches it. Standing mandates (M5) are meant to make
@@ -221,16 +361,15 @@ confirmations rarer, and so more likely to be read.
 A mandate captures the user's intent; it doesn't judge it. If the user
 pastes an address copied from a scam page, or a "recipient" an attacker
 supplied by email, the mandate faithfully authorizes paying the scammer, and
-M4 will faithfully enforce it. The trusted/untrusted split protects the
+M4 faithfully enforces it. The trusted/untrusted split protects the
 instruction from the agent. It can't protect the user from what they read
 before writing it.
 
 ### Authorized but badly executed
-An injected agent can still do what the mandate allows, badly: swap at a
-terrible price, pay in several pieces, or use up the transaction cap on
-transactions that fail on chain. Swap minimums (`min_buy_per_sell`) will
-bound price once M4 checks them. A swap mandate without a stated minimum is
-flagged at confirmation, not bounded.
+An injected agent can still do what the mandate allows, badly: swap at the
+minimum instead of the market price, pay in several pieces, or use up the
+transaction cap and budget on transactions that fail on chain. Budgets and
+swap minimums bound how badly; they don't make the agent do well.
 
 ### Same-host compromise
 OS file permissions are the only authentication for mandates in M3. There
@@ -261,14 +400,17 @@ The proxy must insert "exhausted" events, so its connection is allowed to
 insert into `events`, and the authorizer can't tell that from inserting a
 "revoked" event. Only the proxy's Python code refuses revoking. That gap can
 only ever make the agent do less. In the other direction, the authorizer
-can't stop the proxy from *raising* a counter, which also only blocks more.
+can't stop the proxy from *raising* a counter or a `spending` amount, which
+also only blocks more. Triggers refuse lowering either one.
 
-### Charged slots that weren't used
-The mandate is charged before the audit record is written, so if the write
-fails, the transaction is blocked but its slot is spent (the reverse order
-could record "allow" for a transaction that couldn't be charged). A
-transaction the node then rejects ("nonce too low") is also charged, as it
-is audited as allowed. Both fail closed: the agent can do less, not more.
+### Charged slots and budgets that weren't used
+Budgets and transaction slots are charged when a transaction is forwarded,
+not when it's mined. A forwarded transaction that later fails on chain, or
+that the node rejects ("nonce too low"), still spends its budget and its
+slot. The charge also comes before the audit record is written, so if the
+write fails, the transaction is blocked but its charge stays (the reverse
+order could record "allow" for a transaction that couldn't be charged). All
+of these fail closed: the agent can do less, not more.
 
 ### Only one-shot mandates
 Mandates last at most 24 hours and can't renew. Recurring instructions are
@@ -284,7 +426,11 @@ run time. A wrong or malicious entry produces a mandate for the wrong
 contract, and the user's summary shows the registry's name for it.
 Uniswap on Base Sepolia is SwapRouter02 only. UniversalRouter and Permit2
 flows aren't supported yet (Permit2 approvals are off-chain or use events
-M2 doesn't decode).
+M2 doesn't decode, and an undecoded Permit2 event that names the agent
+escalates). Since M4 the registry's venues are trusted completely: every
+contract a venue lists may receive the sell token's approval and be called,
+and router features the mandate doesn't model (`pull`, `sweepToken`,
+`multicall`) are covered only by the flow rules and the swap minimum.
 
 ### Wall-clock expiry
 Expiry is checked against the proxy's clock when the transaction arrives. A
@@ -307,8 +453,10 @@ injected agent can sign a Permit2 approval and hand the signature to an
 attacker, who spends it from their own account. **The firewall never sees
 this.** It inspects only `eth_sendRawTransaction`, and the signing methods
 (`eth_signTypedData*`) are denied on the proxy but performed by the agent's
-own key. This is the most common drainer pattern today. **A mandate doesn't help:**
-the signature is never a transaction, so it is never matched to one. A
+own key. This is the most common drainer pattern today. **A mandate doesn't help,
+and neither does M4's verifier:** the signature is never a transaction, so it is
+never matched to one. (When the attacker later spends the permit, that's their
+transaction, sent from their own account.) A
 pre-sign / typed-data inspection milestone (M7: Permit2 and EIP-2612 at
 minimum) is on the roadmap before v0.1.
 
@@ -317,10 +465,13 @@ minimum) is on the roadmap before v0.1.
   simulated on the latest block and included a few blocks later. In between,
   an upgradeable contract can be upgraded, a "honeypot" owner can flip a
   switch, or a bot can move a price. Effects record exactly which block they
-  were simulated on (`fork_block_number`, `fork_block_hash`). Later
-  mitigations: mandate bounds such as minimum output and deadlines (M4),
-  private mempools, and treating upgradeable or `DELEGATECALL` targets as a
-  reason to escalate.
+  were simulated on (`fork_block_number`, `fork_block_hash`). M4's swap
+  minimum is checked against the *simulated* fill only. If the price moves
+  after simulation, only the router's own `amountOutMinimum` protects the
+  real fill, and that is in calldata the agent chooses and the firewall
+  doesn't decode. Later mitigations: checking the router's minimum in
+  calldata, deadlines, private mempools, and treating upgradeable or
+  `DELEGATECALL` targets as a reason to escalate.
 - **Block number and timestamp dependence.** A contract can behave honestly
   at the simulated timestamp and steal at the real one (see the `TimeBomb`
   test contract). Simulating twice at shifted times would catch the simple
@@ -340,8 +491,9 @@ minimum) is on the roadmap before v0.1.
 
 ### Token checks have limits
 - A fully malicious token can lie in `balanceOf` and `allowance` as well as
-  in its events. The checks catch tokens whose storage is honest. M4's
-  registry of known token addresses is the real defense.
+  in its events. The checks catch tokens whose storage is honest. The real
+  defense is the registry: mandates name tokens only through it, so an
+  outflow of any other token matches no intent and is blocked.
 - ERC-20 and ERC-721 are told apart by the shape of the log (the number of
   indexed topics), so a token that indexes its amount looks like an NFT.
 - NFT single-token approvals and `ApprovalForAll` are recorded but not
@@ -350,17 +502,21 @@ minimum) is on the roadmap before v0.1.
   a new `Approval` shows as inconsistent (a false alarm, in the safe
   direction).
 - ERC-1155 transfers and Permit2's own events aren't decoded yet. They are
-  kept as raw unrecognized logs.
+  kept as raw unrecognized logs, and escalate when they name the agent.
+- **False positives in the safe direction.** Rebasing and fee-on-transfer
+  tokens make events and balances disagree, so they escalate. So do
+  ERC-1155 and Permit2 flows. Such tokens can't be used under a mandate
+  yet.
 
 ### Multi-transaction flows
 Each transaction is simulated on its own, against the upstream's latest
-block. (A mandate covers a sequence, such as approve then swap, through its
-transaction cap. The simulation still doesn't.) A transaction with nonce n+1 sent before nonce n is mined fails in
-simulation and is **blocked**. That's fail-closed but inconvenient: "approve
-then swap" works only if the agent waits for the approve to be mined. Whether
-a quick follow-up passes depends on timing. Simulating "approve" alone also
-says little about intent without the swap that follows. M3/M4 should treat a
-sequence as one mandate and track approved-but-unmined transactions.
+block. Budgets are charged at forward time, so accounting across a sequence
+(approve, then swap) needs no pending state. But simulation doesn't replay
+transactions that are forwarded and not yet mined: a transaction with nonce
+n+1 sent before nonce n is mined fails in simulation and is **blocked**.
+That's fail-closed but inconvenient: "approve then swap" works only if the
+agent waits for the approve to be mined, which most agent toolkits do. A
+pending-replay mode is deferred to M6, with a real agent.
 
 ### Same-host access to the simulation node
 The simulation node listens on a random loopback port with no
@@ -433,6 +589,10 @@ re-points its own hostname at `127.0.0.1`) isn't defended against, because the
   That's fail-closed, but it's also a denial of service.
 - One proxy process per file. Two processes appending to the same file may
   interleave records.
+- Since M4, records carry the verdict and the operator's explanation, which
+  include **mandate values** (budgets, what is left, swap minimums). The
+  agent must not be able to read the audit log or the operator log, or it
+  learns exactly what item 30 keeps from it.
 - Blocked records name the mandate they were checked against whenever one
   was identified. They don't copy its content: look the id up with
   `mandate-firewall mandate show <id>`. If the store is lost, the ids in the
@@ -441,7 +601,9 @@ re-points its own hostname at `127.0.0.1`) isn't defended against, because the
 ### Availability
 Simulation adds latency (tens of milliseconds against a local node, more
 against a hosted RPC, where every cold state read is a round trip) and new
-ways to fail. Every one of them blocks. While the simulation node is down and
+ways to fail. Every one of them blocks. Verification itself is pure code
+and fast, but a transaction that escalates on a false positive (item 28) is
+blocked just the same. While the simulation node is down and
 can't be restarted, **every transaction is blocked**. Transactions are
 simulated one at a time. A transaction that touches thousands of addresses
 can run into the timeout and be blocked (token checks are capped up front;

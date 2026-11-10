@@ -178,34 +178,38 @@ pause
 # --- 5 ---------------------------------------------------------------------------
 
 step 5 "the transaction you asked for goes through"
-explain "Alice pays Bob 0.01 ETH."
+explain "Alice pays Bob 0.004 ETH, within the 0.01 ETH you allowed."
 explain "Expect: status 1. The audit record names the mandate and says this is its"
 explain "transaction 1."
 echo
-send "$ALICE_KEY" "$BOB" 0.01ether
+send "$ALICE_KEY" "$BOB" 0.004ether
 last_audit '{decision, mandate_id, mandate_transaction, to}'
 pause
 
 # --- 6 ---------------------------------------------------------------------------
 
-step 6 "THE GAP: an off-mandate transaction also goes through (until M4)"
+step 6 "an off-mandate transaction is blocked (M3's gap, closed by M4)"
 explain "An injected agent sends 0.001 ETH to $THIEF instead."
-explain "The mandate only allows paying Bob, but M3 doesn't compare what a"
-explain "transaction does with what the mandate allows yet; that's M4. M3 only"
-explain "checks that a confirmed, unexpired mandate exists and has transactions left."
-explain "Expect: status 1, charged as the mandate's transaction 2. The simulated"
-explain "effects on record show exactly where the ETH went."
+explain "On M3 code this went through: M3 only checked that a confirmed, unexpired"
+explain "mandate existed and had transactions left. Since M4 the firewall compares"
+explain "what the transaction does (from simulation) with what the mandate allows."
+explain "scripts/demo_m4.sh shows verification in detail."
+explain "Expect: error -32003 'off-mandate: ... recipient not in mandate'. Not"
+explain "charged: the mandate still has one transaction left."
 echo
 send "$ALICE_KEY" "$THIEF"
-last_audit '{decision, mandate_transaction, to, moved: [.effects.native_balance_changes[] | select(.address != "'"$ALICE"'")]}'
+last_audit '{decision, mandate_transaction, violations: [.verdict.violations[].code]}'
 pause
 
 # --- 7 ---------------------------------------------------------------------------
 
 step 7 "the transaction cap holds"
-explain "Two transactions used, two allowed. A third one, even to Bob, is blocked."
-explain "Expect: error -32003 'mandate ... is exhausted (2 of 2 transactions used)'."
+explain "Alice pays Bob 0.001 ETH: allowed, transaction 2 of 2. Then once more, also"
+explain "to Bob and well within the budget: blocked, because both transactions are used."
+explain "Expect: status 1, then error -32003 'mandate ... is exhausted (2 of 2"
+explain "transactions used)'."
 echo
+send "$ALICE_KEY" "$BOB"
 send "$ALICE_KEY" "$BOB"
 last_audit '{decision, reason, mandate_id, mandate_transaction}'
 echo

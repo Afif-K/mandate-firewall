@@ -87,8 +87,10 @@ Env & deps: `uv sync`, then `uv run pytest`, `uv run ruff check .`.
 - [x] M2: Anvil simulation producing structured effects (plan and decisions: docs/m2-plan.md)
 - [x] M3: Mandate capture: user instruction -> locked, structured mandate
       (plan and decisions: docs/m3-plan.md)
-- [ ] M4: Verifier: the deterministic matcher decides; the LLM only writes the
-      plain-English explanation, never allows or blocks. Human escalation for anomalies
+- [x] M4: Verifier: the deterministic matcher decides; explanations are deterministic
+      templates (the optional LLM `explain` command is deferred). Anomalies escalate:
+      block plus alert, and the human acts on the mandate, never on a transaction.
+      Swaps require a minimum (plan and decisions: docs/m4-plan.md)
 - [ ] M5: Standing mandates: per-period budgets and transaction caps, expiries beyond
       24 hours, renewal and revocation. Human input once per mandate, never per
       transaction; transaction-time decisions are fully automated
@@ -103,7 +105,7 @@ Env & deps: `uv sync`, then `uv run pytest`, `uv run ruff check .`.
 - [ ] M9: User-wallet EIP-712 mandate signing: the user's own wallet signs the canonical
       mandate and the firewall checks the signer. (Placement before/after v0.1 is open.)
 
-**Current milestone: M4**
+**Current milestone: M5**
 
 ## How to work with me
 - I'm a CS/AI engineering student building this to learn deeply and to ship

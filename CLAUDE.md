@@ -31,12 +31,16 @@ intent verification. Inspired by the trusted/untrusted separation in
   (`eth_sendRawTransaction`); refuse to forward blocked ones.
 - **The agent can never modify a mandate.** Mandates come only from the
   user's trusted instruction and are confirmed by the user.
-- **The verifier LLM never sees untrusted content.** It receives only the
-  mandate and simulated effects. Replace attacker-controlled strings (e.g.
-  token names/symbols) with canonical values from a verified registry.
-- **The LLM can only make decisions stricter.** Deterministic checks are a
-  hard gate; the LLM may escalate or block, never override a block.
-- **Fail closed.** If decoding, simulation, or the LLM fails, block or
+- **The matcher alone decides.** Allow, block and escalate come only from
+  deterministic checks of the simulated effects against the mandate. An LLM
+  may turn the user's instruction into a draft mandate (which the user
+  confirms) or explain a decision afterwards, outside the decision path. It
+  never allows, blocks or escalates a transaction.
+- **No LLM sees untrusted content.** The capture LLM reads only the user's
+  instruction. Explanations use the mandate and structured verdicts, never
+  calldata, log data or revert data. Replace attacker-controlled strings
+  (e.g. token names/symbols) with canonical values from a verified registry.
+- **Fail closed.** If decoding, simulation, or verification fails, block or
   escalate. Never silently allow.
 - **Default-deny RPC methods.** Intercept transaction-sending methods,
   forward an explicit allowlist of read-only methods, reject everything else.
@@ -54,10 +58,10 @@ agent -> [RPC proxy] -> decode -> simulate (Anvil fork) -> effects
                                                       |
 user instruction -> [mandate capture] -> locked mandate
                                                       v
-                              verifier (matcher + isolated LLM)
+                       verifier (deterministic matcher, no LLM)
                                                       v
-                      allow (forward) / block / escalate (human)
-                                   + audit log
+           allow (forward + charge budget) / block / escalate (block + alert)
+                     + audit log with a "You asked / This transaction" diff
 ```
 Entry points: RPC proxy first; later an MCP server and wallet pre-sign hooks.
 
@@ -91,6 +95,14 @@ Env & deps: `uv sync`, then `uv run pytest`, `uv run ruff check .`.
       templates (the optional LLM `explain` command is deferred). Anomalies escalate:
       block plus alert, and the human acts on the mandate, never on a transaction.
       Swaps require a minimum (plan and decisions: docs/m4-plan.md)
+- [ ] v0.1 release (beta): a small benchmark, README polish, demo GIF, quickstart,
+      threat model; make the repo public. Ships with the gaps THREAT_MODEL.md
+      documents, including off-chain signatures (M7) and the unchecked router minimum
+- [ ] Router calldata check: decode known router calldata (SwapRouter02
+      `exactInputSingle`, `exactInput`, `multicall`) and require the router's own
+      `amountOutMinimum` to be at least the mandate's minimum for the amount sold.
+      The simulated-fill check doesn't protect the real fill if the price moves after
+      simulation (see THREAT_MODEL.md). Venue calls that can't be decoded are blocked
 - [ ] M5: Standing mandates: per-period budgets and transaction caps, expiries beyond
       24 hours, renewal and revocation. Human input once per mandate, never per
       transaction; transaction-time decisions are fully automated
@@ -100,17 +112,11 @@ Env & deps: `uv sync`, then `uv run pytest`, `uv run ruff check .`.
 - [ ] M7: Pre-sign / typed-data inspection: check EIP-712 signatures before the agent
       signs them (Permit2 and EIP-2612 permits at minimum). Off-chain signatures never
       reach eth_sendRawTransaction, so the proxy can't see them (see THREAT_MODEL.md)
-- [ ] Router calldata check (before v0.1): decode known router calldata (SwapRouter02
-      `exactInputSingle`, `exactInput`, `multicall`) and require the router's own
-      `amountOutMinimum` to be at least the mandate's minimum for the amount sold.
-      The simulated-fill check doesn't protect the real fill if the price moves after
-      simulation (see THREAT_MODEL.md). Venue calls that can't be decoded are blocked
-- [ ] v0.1 release: README, demo GIF, quickstart, threat model
 - [ ] M8: Benchmark (build on CrAIBench/AgentDojo scenarios), results, open dataset, writeup
 - [ ] M9: User-wallet EIP-712 mandate signing: the user's own wallet signs the canonical
-      mandate and the firewall checks the signer. (Placement before/after v0.1 is open.)
+      mandate and the firewall checks the signer
 
-**Current milestone: M5**
+**Current milestone: v0.1 release**
 
 ## How to work with me
 - I'm a CS/AI engineering student building this to learn deeply and to ship

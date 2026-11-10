@@ -460,7 +460,7 @@ and neither does M4's verifier:** the signature is never a transaction, so it is
 never matched to one. (When the attacker later spends the permit, that's their
 transaction, sent from their own account.) A
 pre-sign / typed-data inspection milestone (M7: Permit2 and EIP-2612 at
-minimum) is on the roadmap before v0.1.
+minimum) is on the roadmap. v0.1 ships without it.
 
 ### Simulation can differ from what happens on chain
 - **State changes between simulation and inclusion.** The transaction is
@@ -473,7 +473,7 @@ minimum) is on the roadmap before v0.1.
   real fill, and that is in calldata the agent chooses and the firewall
   doesn't decode. An injected agent can pass the simulation at a fair price
   with `amountOutMinimum = 0` and leave the real fill unprotected. **On the
-  roadmap before v0.1:** decode known router calldata (SwapRouter02
+  roadmap right after v0.1:** decode known router calldata (SwapRouter02
   `exactInputSingle`, `exactInput`, `multicall`), require the router's
   `amountOutMinimum` to be at least the mandate's minimum for the amount
   sold, and block venue calls that can't be decoded. Later mitigations:

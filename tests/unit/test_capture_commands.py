@@ -4,6 +4,7 @@ import io
 import json
 import os
 import sqlite3
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,7 @@ from mandate_firewall.capture.settings import CaptureSettings
 from mandate_firewall.cli import build_parser
 from mandate_firewall.mandate.draft import Draft, DraftIntent
 from mandate_firewall.mandate.store import MandateStatus, MandateStore
+from tests.unit.test_mandate_models import CREATED, mandate, swap
 
 PRINCIPAL = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
 OTHER_AGENT = "0x90F79bf6EB2c4f870365E785982E1f101E93b906"
@@ -194,28 +196,40 @@ def test_no_key_points_to_the_structured_path(tmp_path: Path) -> None:
     assert "--send" in err.getvalue()
 
 
-def test_notes_are_shown(settings: CaptureSettings) -> None:
-    swap = Draft(
-        intents=(
-            DraftIntent(
-                kind="swap",
-                asset_symbol="USDC",
-                amount_text="100",
-                buy_symbol="WETH",
-                venue_name="uniswap",
-            ),
-        )
-    )
-    r = cli(
-        settings,
-        "new",
-        "swap 100 USDC for WETH on uniswap",
-        stdin="yes\n",
-        extractor=FakeExtractor([swap]),
-    )
+def swap_draft(**fields: Any) -> Draft:
+    values: dict[str, Any] = {
+        "kind": "swap",
+        "asset_symbol": "USDC",
+        "amount_text": "100",
+        "buy_symbol": "WETH",
+        "venue_name": "uniswap",
+    } | fields
+    return Draft(intents=(DraftIntent(**values),))
+
+
+def test_llm_path_asks_for_the_swap_minimum(settings: CaptureSettings) -> None:
+    # docs/m4-plan.md §6: a swap without a minimum is a question, not a note.
+    fake = FakeExtractor([swap_draft(), swap_draft(min_out_text="0.03")])
+    instruction = "swap 100 USDC for WETH on uniswap"
+    r = cli(settings, "new", instruction, stdin="at least 0.03 WETH\nyes\n", extractor=fake)
     assert r.code == 0, r.err
-    assert "minimum: NONE ⚠" in r.out
-    assert "  ⚠ For swap: no minimum amount to receive" in r.out
+    assert "1. For swap: at least how much WETH must come back for 100 USDC?" in r.out
+    assert fake.instructions[1] == f"{instruction}\nat least 0.03 WETH"
+    assert "minimum: at least 0.03 WETH per 100 USDC sold" in r.out
+    assert "NONE" not in r.out
+    (s,) = stored(settings)
+    assert s.mandate.intents[0].min_buy_per_sell is not None
+
+
+def test_swap_minimum_is_never_skipped(settings: CaptureSettings) -> None:
+    # An extractor that keeps missing the minimum runs out of rounds; no
+    # mandate without a minimum is ever offered for confirmation.
+    fake = FakeExtractor([swap_draft()] * (MAX_ROUNDS + 1))
+    stdin = "whatever the market gives\n" * MAX_ROUNDS + "yes\n"
+    r = cli(settings, "new", "swap 100 USDC for WETH on uniswap", stdin=stdin, extractor=fake)
+    assert r.code == 1
+    assert 'Type "yes"' not in r.out
+    assert stored(settings) == []
 
 
 # --- new, structured path --------------------------------------------------------
@@ -251,6 +265,13 @@ def test_structured_swap_with_minimum(settings: CaptureSettings) -> None:
     assert "minimum: at least 0.03 WETH per 100 USDC sold" in r.out
 
 
+def test_structured_swap_needs_min_out(settings: CaptureSettings) -> None:
+    r = cli(settings, "new", "--swap", "100", "USDC", "--for", "WETH", "--via", "uniswap")
+    assert r.code == 2
+    assert "--swap needs --min-out AMOUNT: the least WETH to receive for 100 USDC" in r.err
+    assert stored(settings) == []
+
+
 def test_structured_questions_stop_instead_of_asking(settings: CaptureSettings) -> None:
     r = cli(settings, "new", "--send", "50", "USDC", "--to", BOB.lower(), stdin="yes\n")
     assert r.code == 1
@@ -264,6 +285,7 @@ def test_structured_questions_stop_instead_of_asking(settings: CaptureSettings) 
     [
         ("new", "--send", "50", "USDC"),  # no --to
         ("new", "--swap", "100", "USDC", "--via", "uniswap"),  # no --for
+        ("new", "--swap", "100", "USDC", "--for", "WETH", "--via", "uniswap"),  # no --min-out
         ("new", "--send", "50", "USDC", "--to", BOB, "--via", "uniswap"),
         ("new", "--swap", "100", "USDC", "--for", "WETH", "--via", "uniswap", "--to", BOB),
         ("new", "send 50 USDC", "--send", "50", "USDC", "--to", BOB),
@@ -349,7 +371,7 @@ def test_address_book_name(tmp_path: Path) -> None:
     s = make_settings(tmp_path, address_book_path=book)
     r = cli(s, "new", "--send", "5", "USDC", "--to", "Bob", stdin="yes\n")
     assert r.code == 0, r.err
-    assert f'"Bob" is {BOB}, from the address book' in r.out
+    assert f'  ⚠ For transfer: "Bob" is {BOB}, from the address book' in r.out
     assert stored(s)[0].mandate.intents[0].recipient == BOB
 
 
@@ -391,6 +413,24 @@ def test_show_by_prefix(settings: CaptureSettings) -> None:
         assert f"id: {mid}" in r.out
         assert "status: active, 0 of 3 transactions used" in r.out
         assert "SEND at most 5 USDC" in r.out
+
+
+def test_stored_swap_without_minimum_still_loads(settings: CaptureSettings) -> None:
+    # Mandates locked before the minimum was required stay valid: their id
+    # is a hash of their content, and the verifier still applies bought > 0.
+    old = mandate(principal=PRINCIPAL, intents=(swap(min_buy_per_sell=None),))
+    store = MandateStore(
+        settings.mandate_db_path, create=True, clock=lambda: CREATED + timedelta(minutes=1)
+    )
+    try:
+        mid = store.add(old)
+    finally:
+        store.close()
+    (s,) = stored(settings)
+    assert s.id == mid and s.mandate == old
+    r = cli(settings, "show", mid)
+    assert r.code == 0, r.err
+    assert "minimum: NONE ⚠ you could receive far less" in r.out
 
 
 @pytest.mark.parametrize("key", ["0x1234", "zzzzzzzzzz", "0x" + "0" * 64])

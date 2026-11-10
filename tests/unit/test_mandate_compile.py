@@ -376,10 +376,43 @@ def test_swap_with_minimum_compiles_to_a_ratio() -> None:
     assert result.notes == ()
 
 
-def test_swap_without_minimum_compiles_with_a_warning() -> None:
-    result = compiled(run("swap 100 USDC for WETH on uniswap", swap()))
-    assert result.mandate.intents[0].min_buy_per_sell is None  # type: ignore[union-attr]
-    assert any("no minimum" in note for note in result.notes)
+def test_swap_without_minimum_is_a_question() -> None:
+    # docs/m4-plan.md §6: without a minimum, pull + sweep can drain the swap.
+    q = questions(run("swap 100 USDC for WETH on uniswap", swap()))
+    assert "For swap: at least how much WETH must come back for 100 USDC?" in q
+    assert "A minimum is required" in q
+    assert 'Answer like "at least 0.03 WETH"' in q
+
+
+def test_answering_the_minimum_question_compiles() -> None:
+    # The answer is appended to the instruction, so the minimum is grounded
+    # in the user's own words like everything else.
+    text = "swap 100 USDC for WETH on uniswap\nat least 0.03 WETH"
+    result = compiled(run(text, swap(min_out="0.03")))
+    ratio = result.mandate.intents[0].min_buy_per_sell  # type: ignore[union-attr]
+    assert ratio is not None
+    assert (ratio.numerator, ratio.denominator) == (3 * 10**16, 100_000_000)
+    assert result.notes == ()
+
+
+def test_minimum_question_without_known_tokens_is_generic() -> None:
+    # The sell token is unknown, so the question can't name an amount; it is
+    # still asked in this round, next to the token question.
+    q = questions(run("swap 100 FOO for WETH on uniswap", swap(sell="FOO")))
+    assert "isn't a token I know" in q
+    assert "least amount of the bought token to receive" in q
+
+
+def test_minimum_question_echoes_no_draft_text() -> None:
+    # Symbols in the question come from the registry, the amount from the
+    # compiled budget, so the extractor's spelling never reaches the user.
+    q = questions(run("swap 100.0 usdc for weth on uniswap", swap("100.0", "usdc", "weth")))
+    assert "at least how much WETH must come back for 100 USDC?" in q
+
+
+def test_zero_minimum_is_a_question() -> None:
+    q = questions(run("swap 100 USDC for at least 0 WETH on uniswap", swap(min_out="0")))
+    assert "must be more than zero" in q
 
 
 def test_swap_minimum_must_be_grounded() -> None:
@@ -411,8 +444,8 @@ def test_transfer_with_swap_fields_asks_if_a_swap_was_meant() -> None:
 
 
 def test_transfer_and_swap_together() -> None:
-    text = f"send 50 USDC to {BOB} and swap 100 USDC for WETH on uniswap"
-    result = compiled(run(text, send(), swap()))
+    text = f"send 50 USDC to {BOB} and swap 100 USDC for at least 0.03 WETH on uniswap"
+    result = compiled(run(text, send(), swap(min_out="0.03")))
     assert [i.kind for i in result.mandate.intents] == ["transfer", "swap"]
 
 
@@ -429,6 +462,7 @@ def test_all_questions_come_in_one_round_and_are_numbered() -> None:
     assert "For transfer #1: how much" in q
     assert "For transfer #1: who should receive" in q
     assert "For swap #2: on which venue" in q
+    assert "For swap #2: what is the least amount of the bought token" in q
 
 
 def test_no_intents_asks_what_to_do() -> None:

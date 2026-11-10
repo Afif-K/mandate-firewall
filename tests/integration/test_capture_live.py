@@ -56,6 +56,19 @@ def test_swap_with_minimum_compiles(extractor: AnthropicExtractor) -> None:
     assert intent.min_buy_per_sell is not None  # type: ignore[union-attr]
 
 
+def test_missing_minimum_is_asked_then_answered(extractor: AnthropicExtractor) -> None:
+    # docs/m4-plan.md §6: the answer is appended to the instruction, and the
+    # real extractor must pick the minimum up from that second line.
+    first = "swap 100 USDC for WETH on Uniswap"
+    asked = _compile(first, extractor)
+    assert isinstance(asked, NeedsClarification), asked
+    assert any("at least how much WETH" in q for q in asked.questions)
+    result = _compile(f"{first}\nat least 0.03 WETH", extractor)
+    assert isinstance(result, Compiled), result
+    ratio = result.mandate.intents[0].min_buy_per_sell  # type: ignore[union-attr]
+    assert ratio is not None and ratio.numerator == 3 * 10**16
+
+
 def test_missing_values_become_questions(extractor: AnthropicExtractor) -> None:
     result = _compile("swap my USDC for ETH", extractor)
     assert isinstance(result, NeedsClarification), result

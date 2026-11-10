@@ -140,7 +140,9 @@ def _add_mandate_parser(commands: Any) -> None:
     new.add_argument("--swap", nargs=2, metavar=("AMOUNT", "SYMBOL"), help="swap, no LLM")
     new.add_argument("--for", dest="buy", metavar="SYMBOL", help="token to buy with --swap")
     new.add_argument("--via", metavar="VENUE", help="venue for --swap, e.g. uniswap")
-    new.add_argument("--min-out", metavar="AMOUNT", help="least amount to receive with --swap")
+    new.add_argument(
+        "--min-out", metavar="AMOUNT", help="least amount to receive with --swap (required)"
+    )
     new.add_argument("--principal", metavar="ADDRESS", help="which of MANDATE_PRINCIPALS")
     new.add_argument("--replace", action="store_true", help="revoke the account's active mandate")
     new.add_argument(

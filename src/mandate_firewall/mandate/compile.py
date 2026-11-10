@@ -52,6 +52,7 @@ from mandate_firewall.mandate.models import (
     TransferIntent,
 )
 from mandate_firewall.mandate.registry import Registry, UnknownSymbolError, UnknownVenueError
+from mandate_firewall.mandate.render import amount_text
 from mandate_firewall.models import UINT256_MAX
 
 ZERO_ADDRESS = "0x" + "00" * 20
@@ -86,8 +87,8 @@ class _Result(BaseModel):
 class Compiled(_Result):
     outcome: Literal["compiled"] = "compiled"
     mandate: Mandate
-    # Facts the confirmation screen must show next to the mandate, such as a
-    # swap without a minimum or an address taken from the address book.
+    # Facts the confirmation screen must show next to the mandate, such as
+    # an address taken from the address book.
     notes: tuple[str, ...]
 
 
@@ -254,23 +255,28 @@ def _compile_swap(d: DraftIntent, ctx: _Context, label: str) -> _IntentResult:
 
     venues = _venues(d.venue_name, ctx, what, questions)
 
-    min_out = None
-    if d.min_out_text is not None:
-        min_out = _amount(d.min_out_text, buy, ctx, what, "", questions)
+    # A minimum is required (docs/m4-plan.md §6). Without one, "something
+    # arrived" is all the verifier can check, and router features such as
+    # pull + sweepToken let an injected agent sell 100 USDC, send 1 wei of
+    # WETH back to the principal and the rest to itself. Asked in the same
+    # round as any other question, so one answer can cover everything.
+    min_out = _amount(
+        d.min_out_text, buy, ctx, what, _minimum_question(sell, buy, sell_amount, ctx), questions
+    )
 
-    if questions or sell is None or buy is None or sell_amount is None or venues is None:
+    if (
+        questions
+        or sell is None
+        or buy is None
+        or sell_amount is None
+        or venues is None
+        or min_out is None
+    ):
         return None, questions, notes
 
-    ratio = None
-    if min_out is None:
-        notes.append(
-            f"{what}: no minimum amount to receive was given, so the swap could return "
-            "far less than the tokens are worth."
-        )
-    else:
-        # "at least 0.03 WETH for 100 USDC" as a rate in base units. M4 checks
-        # bought * denominator >= sold * numerator, so partial fills work too.
-        ratio = Ratio(numerator=min_out, denominator=sell_amount)
+    # "at least 0.03 WETH for 100 USDC" as a rate in base units. M4 checks
+    # bought * denominator >= sold * numerator, so partial fills work too.
+    ratio = Ratio(numerator=min_out, denominator=sell_amount)
     intent = SwapIntent(
         kind="swap",
         sell=sell,
@@ -280,6 +286,26 @@ def _compile_swap(d: DraftIntent, ctx: _Context, label: str) -> _IntentResult:
         venues=venues,
     )
     return intent, questions, notes
+
+
+def _minimum_question(
+    sell: AssetRef | None, buy: AssetRef | None, sell_amount: int | None, ctx: _Context
+) -> str:
+    """Asks for the swap minimum in the user's terms when the rest is known.
+    Symbols come from the registry and the amount from the compiled budget,
+    so no Draft text is echoed here."""
+    why = (
+        "A minimum is required: without one, the swap could return far less than "
+        "the tokens are worth."
+    )
+    if sell is None or buy is None or sell_amount is None:
+        return f"what is the least amount of the bought token to receive? {why}"
+    buy_symbol = ctx.registry.symbol_for(buy.address) or "the bought token"
+    sold = amount_text(sell_amount, sell, ctx.registry, with_address=False)
+    return (
+        f"at least how much {buy_symbol} must come back for {sold}? {why} "
+        f'Answer like "at least 0.03 {buy_symbol}".'
+    )
 
 
 def _cross_intent_questions(intents: list[Intent]) -> list[str]:

@@ -63,7 +63,7 @@ EXIT_USAGE = 2  # bad configuration or arguments
 STRUCTURED_HINT = (
     "Without the LLM, use the structured form:\n"
     "  mandate-firewall mandate new --send 50 USDC --to 0x<checksummed address>\n"
-    "  mandate-firewall mandate new --swap 100 USDC --for WETH --via uniswap [--min-out 0.03]"
+    "  mandate-firewall mandate new --swap 100 USDC --for WETH --via uniswap --min-out 0.03"
 )
 
 
@@ -285,7 +285,14 @@ def _structured_draft(args: argparse.Namespace) -> tuple[Draft, str]:
     if args.buy is None or args.via is None:
         _fail(EXIT_USAGE, "--swap needs --for SYMBOL and --via VENUE")
     amount, symbol = args.swap
-    minimum = f"at least {args.min_out} " if args.min_out else ""
+    if args.min_out is None:
+        # Required (docs/m4-plan.md §6). The compiler would ask too; a flag
+        # error says what to type.
+        _fail(
+            EXIT_USAGE,
+            f"--swap needs --min-out AMOUNT: the least {safe_text(args.buy, 20)} to receive "
+            f"for {safe_text(amount, 40)} {safe_text(symbol, 20)}",
+        )
     intent = DraftIntent(
         kind="swap",
         asset_symbol=symbol,
@@ -294,7 +301,7 @@ def _structured_draft(args: argparse.Namespace) -> tuple[Draft, str]:
         min_out_text=args.min_out,
         venue_name=args.via,
     )
-    instruction = f"swap {amount} {symbol} for {minimum}{args.buy} on {args.via}"
+    instruction = f"swap {amount} {symbol} for at least {args.min_out} {args.buy} on {args.via}"
     return Draft(intents=(intent,)), instruction
 
 

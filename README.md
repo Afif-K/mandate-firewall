@@ -203,17 +203,6 @@ mandates: the firewall refusing to start without a store, an account without a
 mandate blocked, the transaction cap, a live revoke, the missing mandate
 methods, and a tampered store row.
 
-[`scripts/demo_m2.sh`](scripts/demo_m2.sh) showed simulation on M2 code: an
-ERC-20 transfer checked against the token's storage, a reverting transfer that's
-blocked, a token whose events lie, and the simulator being killed and restarted.
-Its "Expect" lines describe M2. On M4 code its token transfers are blocked,
-because the token it deploys isn't in the registry or in any mandate, and the
-lying token escalates. It runs against the anvil and firewall from steps 1-3.
-
-```bash
-scripts/demo_m2.sh
-```
-
 ## Configuration
 
 Flags override environment variables (or a `.env` file; see

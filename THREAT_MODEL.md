@@ -314,7 +314,9 @@ Revoke them and lock a new one with a minimum.
 ### A minimum is a floor, not a fair price
 The verifier checks that a swap returns at least the minimum the user typed.
 An MEV bot or a manipulated pool can still push the fill down to exactly
-that floor. The minimum is only as good as the number the user chose.
+that floor. The minimum is only as good as the number the user chose. And
+today it holds only for the simulated fill, not the real one: see "State
+changes between simulation and inclusion" below.
 
 ### Residual allowances
 A partly used approval stays in place after the mandate ends: approve 100
@@ -469,9 +471,14 @@ minimum) is on the roadmap before v0.1.
   minimum is checked against the *simulated* fill only. If the price moves
   after simulation, only the router's own `amountOutMinimum` protects the
   real fill, and that is in calldata the agent chooses and the firewall
-  doesn't decode. Later mitigations: checking the router's minimum in
-  calldata, deadlines, private mempools, and treating upgradeable or
-  `DELEGATECALL` targets as a reason to escalate.
+  doesn't decode. An injected agent can pass the simulation at a fair price
+  with `amountOutMinimum = 0` and leave the real fill unprotected. **On the
+  roadmap before v0.1:** decode known router calldata (SwapRouter02
+  `exactInputSingle`, `exactInput`, `multicall`), require the router's
+  `amountOutMinimum` to be at least the mandate's minimum for the amount
+  sold, and block venue calls that can't be decoded. Later mitigations:
+  deadlines, private mempools, and treating upgradeable or `DELEGATECALL`
+  targets as a reason to escalate.
 - **Block number and timestamp dependence.** A contract can behave honestly
   at the simulated timestamp and steal at the real one (see the `TimeBomb`
   test contract). Simulating twice at shifted times would catch the simple

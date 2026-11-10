@@ -9,8 +9,8 @@ Before an AI agent's transaction reaches the blockchain, the firewall:
    agent reads any untrusted content.
 2. Simulates each proposed transaction on a forked chain (Anvil) to get its
    real effects: balance deltas, approvals, recipients, contracts touched.
-3. Verifies the effects against the mandate: deterministic matcher first,
-   an isolated LLM only for fuzzy cases.
+3. Verifies the effects against the mandate with a deterministic matcher,
+   which alone decides. No LLM allows or blocks a transaction.
 4. Returns allow / block / escalate, with a plain-English diff:
    "You asked: X. This transaction does: Y."
 
@@ -100,6 +100,11 @@ Env & deps: `uv sync`, then `uv run pytest`, `uv run ruff check .`.
 - [ ] M7: Pre-sign / typed-data inspection: check EIP-712 signatures before the agent
       signs them (Permit2 and EIP-2612 permits at minimum). Off-chain signatures never
       reach eth_sendRawTransaction, so the proxy can't see them (see THREAT_MODEL.md)
+- [ ] Router calldata check (before v0.1): decode known router calldata (SwapRouter02
+      `exactInputSingle`, `exactInput`, `multicall`) and require the router's own
+      `amountOutMinimum` to be at least the mandate's minimum for the amount sold.
+      The simulated-fill check doesn't protect the real fill if the price moves after
+      simulation (see THREAT_MODEL.md). Venue calls that can't be decoded are blocked
 - [ ] v0.1 release: README, demo GIF, quickstart, threat model
 - [ ] M8: Benchmark (build on CrAIBench/AgentDojo scenarios), results, open dataset, writeup
 - [ ] M9: User-wallet EIP-712 mandate signing: the user's own wallet signs the canonical

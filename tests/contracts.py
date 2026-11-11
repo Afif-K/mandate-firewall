@@ -17,6 +17,7 @@ NAMES = (
     "EthForwarder",
     "LyingToken",
     "MockERC20",
+    "MockERC20Permit",
     "MockERC721",
     "MockRouter",
     "SimDetector",

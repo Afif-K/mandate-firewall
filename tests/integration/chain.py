@@ -24,12 +24,15 @@ def sign(
     data: str = "0x",
     value: int = 0,
     nonce: int | None = None,
+    key: str = KEY,
     **fields: Any,
 ) -> str:
-    """A signed type-2 transaction from ALICE, as raw hex. Not sent."""
+    """A signed type-2 transaction from ALICE (or from `key`'s account), as
+    raw hex. Not sent."""
     chain_id = int(rpc_result(url, "eth_chainId"), 16)
     if nonce is None:
-        nonce = int(rpc_result(url, "eth_getTransactionCount", [ALICE, "pending"]), 16)
+        sender = Account.from_key(key).address
+        nonce = int(rpc_result(url, "eth_getTransactionCount", [sender, "pending"]), 16)
     tx: dict[str, Any] = {
         "type": 2,
         "chainId": chain_id,
@@ -43,13 +46,15 @@ def sign(
     }
     if to is not None:
         tx["to"] = to
-    return "0x" + bytes(Account.sign_transaction(tx, KEY).raw_transaction).hex()
+    return "0x" + bytes(Account.sign_transaction(tx, key).raw_transaction).hex()
 
 
-def send(url: str, to: str | None, data: str = "0x", value: int = 0) -> dict[str, Any]:
-    """Sign as ALICE, send, and wait for the receipt (anvil's automine returns
-    the hash before the block exists)."""
-    tx_hash = rpc_result(url, "eth_sendRawTransaction", [sign(url, to, data, value)])
+def send(
+    url: str, to: str | None, data: str = "0x", value: int = 0, key: str = KEY
+) -> dict[str, Any]:
+    """Sign as ALICE (or as `key`'s account), send, and wait for the receipt
+    (anvil's automine returns the hash before the block exists)."""
+    tx_hash = rpc_result(url, "eth_sendRawTransaction", [sign(url, to, data, value, key=key)])
     for _ in range(100):
         receipt = rpc_result(url, "eth_getTransactionReceipt", [tx_hash])
         if receipt is not None:

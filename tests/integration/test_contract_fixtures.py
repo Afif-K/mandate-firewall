@@ -2,14 +2,27 @@
 what it exists to do. They also run real receipts and traces through the log
 decoder and trace parser."""
 
+from typing import Any
+
 import pytest
+from eth_account import Account
 from eth_utils import to_checksum_address
 
 from mandate_firewall.models import TokenStandard
 from mandate_firewall.simulate.logs import decode_logs
 from mandate_firewall.simulate.trace import parse_call_trace
 from tests.contracts import NAMES, load
-from tests.integration.chain import ALICE, BOB, THIEF, balance, call, deploy, send, transact
+from tests.integration.chain import (
+    ALICE,
+    BOB,
+    KEY,
+    THIEF,
+    balance,
+    call,
+    deploy,
+    send,
+    transact,
+)
 from tests.integration.services import Service, rpc_call, rpc_result
 
 pytestmark = pytest.mark.anvil
@@ -46,6 +59,116 @@ def test_mock_erc20(anvil: Service) -> None:
     receipt = transact(anvil.url, token, address, "approve", BOB, 2**256 - 1)
     (approval,) = decode_logs(receipt["logs"], receipt["transactionHash"]).approvals
     assert (approval.spender, approval.amount) == (BOB, 2**256 - 1)
+
+
+# --- MockERC20Permit: EIP-2612, the off-chain signature gap (docs/v0.1-plan.md, M2) ---
+
+# anvil's public dev account 3 (the "test test ... junk" mnemonic). Local only.
+ATTACKER_KEY = "0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6"
+ATTACKER = Account.from_key(ATTACKER_KEY).address
+SECP256K1_N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
+FAR_FUTURE = 2**40
+
+
+def permit_signature(
+    url: str, token: str, owner_key: str, spender: str, value: int, nonce: int, deadline: int
+) -> tuple[int, int, int]:
+    """(v, r, s) of an EIP-2612 permit, signed off-chain: no transaction."""
+    signed = Account.sign_typed_data(
+        owner_key,
+        domain_data={
+            "name": "Mock Permit Token",
+            "version": "1",
+            "chainId": int(rpc_result(url, "eth_chainId"), 16),
+            "verifyingContract": token,
+        },
+        message_types={
+            "Permit": [
+                {"name": "owner", "type": "address"},
+                {"name": "spender", "type": "address"},
+                {"name": "value", "type": "uint256"},
+                {"name": "nonce", "type": "uint256"},
+                {"name": "deadline", "type": "uint256"},
+            ]
+        },
+        message_data={
+            "owner": Account.from_key(owner_key).address,
+            "spender": spender,
+            "value": value,
+            "nonce": nonce,
+            "deadline": deadline,
+        },
+    )
+    return signed.v, signed.r, signed.s
+
+
+@pytest.fixture
+def permit_token(anvil: Service) -> str:
+    token = load("MockERC20Permit")
+    address = deploy(anvil.url, token)
+    transact(anvil.url, token, address, "mint", ALICE, 100_000_000)
+    return address
+
+
+def submit_permit(
+    url: str, token: str, sig: tuple[int, int, int], value: int, deadline: int = FAR_FUTURE
+) -> dict[str, Any]:
+    """The attacker submits Alice's signed permit from its own account."""
+    v, r, s = sig
+    data = load("MockERC20Permit").call_data(
+        "permit", ALICE, ATTACKER, value, deadline, v, r.to_bytes(32), s.to_bytes(32)
+    )
+    return send(url, token, data, key=ATTACKER_KEY)
+
+
+def test_permit_lets_the_attacker_spend_without_a_transaction_from_alice(
+    anvil: Service, permit_token: str
+) -> None:
+    token = load("MockERC20Permit")
+    alice_nonce = rpc_result(anvil.url, "eth_getTransactionCount", [ALICE, "latest"])
+    sig = permit_signature(anvil.url, permit_token, KEY, ATTACKER, 100_000_000, 0, FAR_FUTURE)
+
+    receipt = submit_permit(anvil.url, permit_token, sig, 100_000_000)
+    assert receipt["status"] == "0x1"
+    assert to_checksum_address(receipt["from"]) == ATTACKER
+    (approval,) = decode_logs(receipt["logs"], receipt["transactionHash"]).approvals
+    assert (approval.owner, approval.spender, approval.amount) == (ALICE, ATTACKER, 100_000_000)
+
+    spend = token.call_data("transferFrom", ALICE, ATTACKER, 100_000_000)
+    assert send(anvil.url, permit_token, spend, key=ATTACKER_KEY)["status"] == "0x1"
+
+    assert call(anvil.url, token, permit_token, "balanceOf", ALICE) == 0
+    assert call(anvil.url, token, permit_token, "balanceOf", ATTACKER) == 100_000_000
+    assert call(anvil.url, token, permit_token, "nonces", ALICE) == 1
+    # The point of the scenario: Alice's account sent nothing.
+    assert rpc_result(anvil.url, "eth_getTransactionCount", [ALICE, "latest"]) == alice_nonce
+
+
+def test_permit_refuses_replay_wrong_signer_expiry_and_high_s(
+    anvil: Service, permit_token: str
+) -> None:
+    token = load("MockERC20Permit")
+    url = anvil.url
+    sig = permit_signature(url, permit_token, KEY, ATTACKER, 5, 0, FAR_FUTURE)
+    assert submit_permit(url, permit_token, sig, 5)["status"] == "0x1"
+    assert submit_permit(url, permit_token, sig, 5)["status"] == "0x0"  # nonce now 1
+
+    bob_key = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"  # dev 1
+    by_bob = permit_signature(url, permit_token, bob_key, ATTACKER, 7, 1, FAR_FUTURE)
+    assert submit_permit(url, permit_token, by_bob, 7)["status"] == "0x0"
+
+    expired = permit_signature(url, permit_token, KEY, ATTACKER, 7, 1, 1)
+    assert submit_permit(url, permit_token, expired, 7, deadline=1)["status"] == "0x0"
+
+    v, r, s = permit_signature(url, permit_token, KEY, ATTACKER, 7, 1, FAR_FUTURE)
+    twin = (55 - v, r, SECP256K1_N - s)  # the same signature's high-s form (27 <-> 28)
+    assert submit_permit(url, permit_token, twin, 7)["status"] == "0x0"
+
+    assert call(url, token, permit_token, "allowance", ALICE, ATTACKER) == 5
+    assert call(url, token, permit_token, "nonces", ALICE) == 1
+    # The low-s form of that last signature is still valid: only the twin was refused.
+    assert submit_permit(url, permit_token, (v, r, s), 7)["status"] == "0x1"
+    assert call(url, token, permit_token, "allowance", ALICE, ATTACKER) == 7
 
 
 def test_mock_erc721(anvil: Service) -> None:

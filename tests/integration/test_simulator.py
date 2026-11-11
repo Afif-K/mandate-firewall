@@ -36,7 +36,7 @@ from mandate_firewall.verify.models import (
 )
 from tests.contracts import load
 from tests.integration.chain import ALICE, BOB, THIEF, balance, deploy, sign, transact
-from tests.integration.conftest import Service, rpc_result, start, stop
+from tests.integration.services import Service, rpc_result, start, stop
 from tests.net import free_port
 
 pytestmark = pytest.mark.anvil

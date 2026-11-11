@@ -9,7 +9,7 @@ from eth_account import Account
 from eth_utils import to_checksum_address
 
 from tests.contracts import Contract
-from tests.integration.conftest import rpc_result
+from tests.integration.services import rpc_result
 
 # anvil's public dev key 0 (the "test test ... junk" mnemonic). Local only.
 KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"

@@ -20,7 +20,7 @@ from mandate_firewall.simulate.node import (
     SimulatorStartupError,
     fetch_fork_point,
 )
-from tests.integration.conftest import Service, rpc_result, start, stop
+from tests.integration.services import Service, rpc_result, start, stop
 from tests.net import free_port
 
 pytestmark = pytest.mark.anvil

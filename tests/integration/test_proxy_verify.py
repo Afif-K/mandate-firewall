@@ -19,7 +19,7 @@ from mandate_firewall.models import UINT256_MAX
 from mandate_firewall.proxy.jsonrpc import TRANSACTION_REJECTED
 from tests.contracts import load
 from tests.integration.chain import ALICE, BOB, THIEF, balance, call, deploy, sign, transact
-from tests.integration.conftest import Proxy, Service, rpc_call, rpc_result
+from tests.integration.services import Proxy, Service, rpc_call, rpc_result
 from tests.mandates import mandate_with, native_transfer_mandate, replace_mandate
 
 pytestmark = pytest.mark.anvil

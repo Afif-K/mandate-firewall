@@ -18,7 +18,7 @@ from eth_utils import keccak
 from mandate_firewall.proxy.jsonrpc import METHOD_NOT_FOUND, TRANSACTION_REJECTED
 from tests.contracts import load
 from tests.integration.chain import ALICE, BOB, THIEF, balance, deploy, sign, transact
-from tests.integration.conftest import (
+from tests.integration.services import (
     Proxy,
     Service,
     rpc_call,

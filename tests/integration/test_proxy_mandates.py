@@ -18,7 +18,7 @@ from eth_utils import keccak
 
 from mandate_firewall.mandate.store import MandateStore
 from mandate_firewall.proxy.jsonrpc import METHOD_NOT_FOUND, TRANSACTION_REJECTED
-from tests.integration.conftest import Proxy, Service, rpc_call, rpc_result, start_proxy, stop
+from tests.integration.services import Proxy, Service, rpc_call, rpc_result, start_proxy, stop
 from tests.mandates import BOB, native_transfer_mandate, seed_store
 
 pytestmark = pytest.mark.anvil

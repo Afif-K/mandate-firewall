@@ -14,7 +14,7 @@ from eth_account import Account
 from eth_utils import keccak
 
 from mandate_firewall.proxy.jsonrpc import METHOD_NOT_FOUND, TRANSACTION_REJECTED
-from tests.integration.conftest import Proxy, Service, rpc_call, rpc_result
+from tests.integration.services import Proxy, Service, rpc_call, rpc_result
 
 pytestmark = pytest.mark.anvil
 

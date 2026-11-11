@@ -10,7 +10,7 @@ from mandate_firewall.simulate.logs import decode_logs
 from mandate_firewall.simulate.trace import parse_call_trace
 from tests.contracts import NAMES, load
 from tests.integration.chain import ALICE, BOB, THIEF, balance, call, deploy, send, transact
-from tests.integration.conftest import Service, rpc_call, rpc_result
+from tests.integration.services import Service, rpc_call, rpc_result
 
 pytestmark = pytest.mark.anvil
 

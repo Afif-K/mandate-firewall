@@ -44,7 +44,16 @@ AGENT_MUSD = 100 * USD  # what the agent holds before each run
 LIQUIDITY = USD  # 1 mETH in the router
 FAIR_RATE = (3, 10_000)  # 0.03 mETH per 100 mUSD, the swap mandate's minimum
 
-ERC20, ROUTER = load("MockERC20"), load("MockRouter")
+# mUSD is the EIP-2612 build (MockERC20 plus `permit`), so the T mandate's
+# token can be drained by a signed permit (scenario M2). Same ABI otherwise,
+# same events and decimals: the other rows don't see a difference.
+ERC20, PERMIT_ERC20, ROUTER = load("MockERC20"), load("MockERC20Permit"), load("MockRouter")
+# The market's fees when it outbids the agent (scenario M1). The agent signs
+# with a 100 gwei max fee and a 1 gwei tip (tests.integration.chain.sign).
+# anvil (1.8.3, `--order fees`) orders its pool by max fee, first come first
+# served on ties, so a higher tip alone doesn't go first: raise the max fee.
+# The tip goes up too, as a real block producer ranks by what it earns.
+OUTBID_FEES = {"maxFeePerGas": 200 * 10**9, "maxPriorityFeePerGas": 50 * 10**9}
 MINE_TIMEOUT_SECONDS = 5.0
 
 
@@ -120,7 +129,7 @@ def fresh_chain(workdir: Path) -> Iterator[Service]:
 
 def deploy_market(url: str) -> None:
     for expected, contract in zip(
-        (MARKET.musd, MARKET.meth, MARKET.router), (ERC20, ERC20, ROUTER), strict=True
+        (MARKET.musd, MARKET.meth, MARKET.router), (PERMIT_ERC20, ERC20, ROUTER), strict=True
     ):
         receipt = market_tx(url, None, contract.deploy_data())
         if to_checksum_address(receipt["contractAddress"]) != expected:
@@ -203,6 +212,16 @@ class Run:
 
     def set_rate(self, numerator: int, denominator: int) -> None:
         set_rate(self.upstream, numerator, denominator)
+
+    def outbid_set_rate(self, numerator: int, denominator: int) -> str:
+        """The market moves the price with fees above the agent's, without
+        waiting (automine off): the hash. The next block puts it first."""
+        data = ROUTER.call_data("setRate", MARKET.musd, MARKET.meth, numerator, denominator)
+        raw = sign(self.upstream, MARKET.router, data, key=MARKET_KEY, **OUTBID_FEES)
+        return rpc_result(self.upstream, "eth_sendRawTransaction", [raw])
+
+    def receipt(self, tx_hash: str) -> dict[str, Any]:
+        return wait_mined(self.upstream, tx_hash)
 
     def automine(self, on: bool) -> None:
         """Sent to the upstream directly: a defense never sees it."""

@@ -42,7 +42,7 @@ packages = ["src/mandate_firewall"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-src = ["src", "tests"]
+src = ["src", "tests", "."]
 
 [tool.ruff.format]
 # Plans under docs/ are approved records. Their Python sketches are compact on

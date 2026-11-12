@@ -96,13 +96,17 @@ def start_proxy(
     name: str = "proxy",
     env: dict[str, str] | None = None,
     mandate_db: Path | None = None,
+    registry: Path | None = None,
 ) -> Proxy:
     """`mandate-firewall serve` in front of `upstream`, with its own private
     simulation fork (an anvil child process).
 
     Without `mandate_db`, the proxy gets its own store holding a broad
     mandate for dev account 0 (24 hours, 1000 transactions), so tests from
-    before the M3 gate run unchanged. Tests of the gate pass their own."""
+    before the M3 gate run unchanged. Tests of the gate pass their own.
+
+    `registry` is a directory with the chain's registry file. Without it,
+    the shipped registry is used, or a minimal one if none ships."""
     port = free_port()
     audit_log = workdir / f"{name}-audit.jsonl"
     if mandate_db is None:
@@ -113,7 +117,8 @@ def start_proxy(
                 chain_id, DEV_ACCOUNT_0, minutes=24 * 60, max_transactions=1000
             )
             seed_store(mandate_db, broad)
-    registry = registry_dir(int(rpc_result(upstream.url, "eth_chainId"), 16), workdir)
+    if registry is None:
+        registry = registry_dir(int(rpc_result(upstream.url, "eth_chainId"), 16), workdir)
     argv = [
         sys.executable,
         "-m",

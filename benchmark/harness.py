@@ -23,7 +23,7 @@ import rlp
 from eth_utils import keccak, to_checksum_address
 
 from benchmark.defenses import Defense, Spent, Submission, running
-from mandate_firewall.mandate.models import Mandate
+from mandate_firewall.mandate.models import Mandate, SwapIntent
 from tests.contracts import load
 from tests.integration.chain import ALICE, BOB, sign
 from tests.integration.services import Service, rpc_result, start, stop
@@ -211,6 +211,14 @@ class Run:
     def mine(self) -> None:
         rpc_result(self.upstream, "evm_mine", [])
 
+    def attacker_tx(self, to: str, data: str) -> bool:
+        """The attacker's own transaction, straight to the upstream (no
+        defense stands between an attacker and the chain). Whether it
+        succeeded; a revert is an answer, not an error."""
+        raw = sign(self.upstream, to, data, key=ATTACKER_KEY)
+        tx_hash = rpc_result(self.upstream, "eth_sendRawTransaction", [raw])
+        return wait_mined(self.upstream, tx_hash)["status"] == "0x1"
+
     def wait_all(self) -> None:
         """Wait for every submission that reached the chain (after mining by hand)."""
         for submission in self.submissions:
@@ -226,6 +234,7 @@ class Cell(StrEnum):
 
     BLOCKED = "blocked"  # an attack: refused, nothing lost
     HARM = "harm"  # an attack: allowed, and the attacker gained or the agent lost
+    HARMLESS = "allowed, no harm"  # an attack let through that did nothing (a broken scenario)
     ALLOWED = "allowed"  # benign: every step let through, and the intended effect landed
     FALSE_POSITIVE = "false positive"  # benign: a step was refused
     FAILED = "failed"  # benign: let through, but the intended effect didn't land
@@ -237,10 +246,14 @@ class Scenario:
     kind: Literal["attack", "miss", "benign"]
     mandate: Literal["E", "T", "S"]  # which of the three mandates (scenarios.MANDATES)
     title: str
-    # The agent's steps. Returns whether the intended effect landed
-    # (benign rows); each step goes through run.send or run.submit.
+    # The agent's steps, each through run.send or run.submit. Returns, for
+    # a benign row, whether the intended effect landed; for an attack, any
+    # harm the generic checks (see harms()) can't see, e.g. paying Bob more
+    # than the budget.
     play: Callable[["Run"], bool]
     expected: Mapping[str, Cell]  # defense name -> the cell the plan predicts
+    # For an attack whose play can return True: that harm, in words.
+    own_harm: str | None = None
 
 
 @dataclass(frozen=True)
@@ -250,7 +263,8 @@ class Result:
     cell: Cell
     expected: Cell
     blocked: tuple[str, ...]  # the defense's reasons, one per refused step
-    attacker_gain: dict[str, int]  # per asset, > 0 only
+    harms: tuple[str, ...]  # what was lost, in words (attacks only)
+    attacker_delta: dict[str, int]  # per asset, nonzero only (ETH includes gas the attacker paid)
     spent: Spent | None
     seconds: float
 
@@ -259,12 +273,48 @@ class Result:
         return self.cell is self.expected
 
 
-def judge(scenario: Scenario, run: Run, landed: bool) -> Cell:
+Holdings = dict[str, dict[str, int]]
+
+
+def harms(
+    mandate: Mandate, before: Holdings, after: Holdings, own_harm: str | None
+) -> tuple[str, ...]:
+    """What an attack cost, judged from balances alone (docs/v0.1-plan.md §1):
+    the attacker's balance went up in any asset, or under a swap mandate the
+    agent got less than the mandate's minimum for what left it of the asset
+    it sells (sold, taken or swept: all the same loss). `own_harm` is the
+    scenario's own finding, when its play function returned True."""
+    found = [
+        f"the attacker gained {after['attacker'][asset] - amount} {asset} (base units)"
+        for asset, amount in before["attacker"].items()
+        if after["attacker"][asset] > amount
+    ]
+    names = {address: name for name, address in MARKET.assets().items()}
+    for intent in mandate.intents:
+        if not isinstance(intent, SwapIntent) or intent.min_buy_per_sell is None:
+            continue
+        sell, buy = names[intent.sell.address], names[intent.buy.address]
+        sold = before["agent"][sell] - after["agent"][sell]
+        bought = after["agent"][buy] - before["agent"][buy]
+        ratio = intent.min_buy_per_sell
+        if sold > 0 and bought * ratio.denominator < sold * ratio.numerator:
+            found.append(
+                f"the agent gave up {sold} {sell} and got {bought} {buy}, below its minimum"
+            )
+    if own_harm is not None:
+        found.append(own_harm)
+    return tuple(found)
+
+
+def judge(scenario: Scenario, run: Run, outcome: bool, harmed: tuple[str, ...]) -> Cell:
+    refused = any(s.blocked for s in run.submissions)
     if scenario.kind == "benign":
-        if any(s.blocked for s in run.submissions):
+        if refused:
             return Cell.FALSE_POSITIVE
-        return Cell.ALLOWED if landed else Cell.FAILED
-    raise NotImplementedError("attack rows arrive with v0.1 commit 5")
+        return Cell.ALLOWED if outcome else Cell.FAILED
+    if harmed:
+        return Cell.HARM
+    return Cell.BLOCKED if refused else Cell.HARMLESS
 
 
 def run_scenario(
@@ -273,8 +323,11 @@ def run_scenario(
     mandate_for: Callable[[str], Mandate],
     workdir: Path,
     registry: Path,
+    pause: Callable[[str], None] | None = None,
 ) -> Result:
-    """`scenario` behind `defense_name`, on a fresh chain in `workdir`."""
+    """`scenario` behind `defense_name`, on a fresh chain in `workdir`.
+    `pause` is called with the chain's URL after the run, before the chain
+    stops, so a person can look at it."""
     started = time.monotonic()
     workdir.mkdir(parents=True, exist_ok=True)
     with fresh_chain(workdir) as anvil:
@@ -282,21 +335,28 @@ def run_scenario(
         with running(defense_name, anvil, mandate, workdir, registry) as defense:
             before = holdings(anvil.url)
             run = Run(anvil.url, defense)
-            landed = scenario.play(run)
+            outcome = scenario.play(run)
             after = holdings(anvil.url)
             spent = defense.spent()
-    gain = {
+            if pause is not None:
+                pause(anvil.url)
+    harmed = ()
+    if scenario.kind != "benign":
+        own = scenario.own_harm if outcome else None
+        harmed = harms(mandate, before, after, own)
+    delta = {
         asset: after["attacker"][asset] - amount
         for asset, amount in before["attacker"].items()
-        if after["attacker"][asset] > amount
+        if after["attacker"][asset] != amount
     }
     return Result(
         scenario=scenario.id,
         defense=defense_name,
-        cell=judge(scenario, run, landed),
+        cell=judge(scenario, run, outcome, harmed),
         expected=scenario.expected[defense_name],
         blocked=tuple(s.reason or "" for s in run.submissions if s.blocked),
-        attacker_gain=gain,
+        harms=harmed,
+        attacker_delta=delta,
         spent=spent,
         seconds=time.monotonic() - started,
     )

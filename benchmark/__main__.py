@@ -1,4 +1,4 @@
-"""uv run python -m benchmark [--only B] [--defense firewall] [--keep]
+"""uv run python -m benchmark [--only B] [--defense firewall] [--keep] [--pause]
 
 Runs each scenario behind each defense on a fresh anvil and prints the
 table. Exits 1 if any cell differs from what the plan predicts.
@@ -9,15 +9,26 @@ import shutil
 import sys
 import tempfile
 import time
+from functools import partial
 from pathlib import Path
 
 from benchmark.defenses import DEFENSES
-from benchmark.harness import Cell, Result, run_scenario, write_registry
+from benchmark.harness import (
+    AGENT,
+    ATTACKER,
+    MARKET,
+    Cell,
+    Result,
+    run_scenario,
+    write_registry,
+)
 from benchmark.scenarios import SCENARIOS, mandate
+from tests.integration.chain import BOB
 
 SYMBOLS = {
     Cell.BLOCKED: "✅ blocked",
     Cell.HARM: "❌ allowed, harm",
+    Cell.HARMLESS: "❓ allowed, no harm",
     Cell.ALLOWED: "✅ allowed",
     Cell.FALSE_POSITIVE: "⚠ false positive",
     Cell.FAILED: "❌ failed",
@@ -32,6 +43,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--defense", choices=DEFENSES, action="append", help="repeatable")
     parser.add_argument(
         "--keep", action="store_true", help="keep each run's directory (logs, audit log, store)"
+    )
+    parser.add_argument(
+        "--pause",
+        action="store_true",
+        help="after each run, keep its chain up until Enter, to inspect it (e.g. with cast)",
     )
     args = parser.parse_args(argv)
 
@@ -48,7 +64,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         for scenario in scenarios:
             for name in defenses:
-                result = run_scenario(scenario, name, mandate, root / scenario.id / name, registry)
+                workdir = root / scenario.id / name
+                pause = partial(wait_for_enter, scenario.id, name) if args.pause else None
+                result = run_scenario(scenario, name, mandate, workdir, registry, pause)
                 results.append(result)
                 mark = "" if result.as_expected else f"   UNEXPECTED (plan: {result.expected})"
                 print(f"{scenario.id} {name:<8} {result.cell}  {result.seconds:.1f}s{mark}")
@@ -67,9 +85,18 @@ def main(argv: list[str] | None = None) -> int:
     for r in results:
         if r.blocked:
             print(f"  {r.scenario} {r.defense}: refused: {'; '.join(r.blocked)}")
-        if r.attacker_gain:
-            print(f"  {r.scenario} {r.defense}: the attacker gained {r.attacker_gain}")
+        for harm in r.harms:
+            print(f"  {r.scenario} {r.defense}: harm: {harm}")
+        if r.attacker_delta:
+            print(f"  {r.scenario} {r.defense}: attacker balance change: {r.attacker_delta}")
     return 1 if unexpected else 0
+
+
+def wait_for_enter(scenario: str, defense: str, url: str) -> None:
+    print(f"\n{scenario} {defense}: the chain is up at {url}")
+    print(f"  attacker {ATTACKER}, agent {AGENT}, bob {BOB}")
+    print(f"  mUSD {MARKET.musd}, mETH {MARKET.meth}, router {MARKET.router}")
+    input("  press Enter to stop it and go on ")
 
 
 def table(results: list[Result], scenarios: list, defenses: list[str]) -> str:

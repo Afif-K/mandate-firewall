@@ -1,8 +1,10 @@
 # Threat model
 
-Status: **beta, Milestone 4.** This document describes what the code in this
-repository does today, not what the project plans to do. It is updated with
-every milestone. If you find a gap that isn't listed here, please open an issue.
+Status: **v0.1 beta** (the verifier is Milestone 4's). This document describes
+what the code in this repository does today, not what the project plans to do.
+It is updated with every milestone. If you find a gap that isn't listed here,
+please report it privately (see "Security" in the README), not in a public
+issue.
 
 ## What the firewall is for
 
@@ -33,6 +35,20 @@ an attacker.
 Verification is only as good as the effects it is given. Effects come from
 a simulation, and a simulation can differ from what happens on chain. See
 "Effects are only as true as the simulation" below.
+
+v0.1 adds no new protection. It adds evidence: a scenario suite of 17
+scenarios, each run on a fresh local chain against no defense, a rule-based
+guard derived from the same mandate, and the firewall, with harm judged from
+balances on chain ([benchmark/RESULTS.md](benchmark/RESULTS.md)). The
+firewall stops 7 of 10 attacks and passes 5 of 7 benign flows. The three
+attacks it misses are gaps this document already lists: a price move between
+simulation and inclusion (scenario M1, "Simulation can differ from what happens on
+chain"), an off-chain permit (scenario M2, "Off-chain signatures"), and a fill pushed
+down to exactly the user's minimum (scenario M3, "A minimum is a floor, not a fair
+price"). Its two false positives are an unlimited approval (blocked on purpose,
+item 27) and an approve + swap sent without waiting for the approval to be
+mined ("Multi-transaction flows"). The defender wrote these scenarios,
+so they illustrate the defenses; they don't measure them.
 
 ## Actors and trust
 

@@ -95,9 +95,10 @@ Env & deps: `uv sync`, then `uv run pytest`, `uv run ruff check .`.
       templates (the optional LLM `explain` command is deferred). Anomalies escalate:
       block plus alert, and the human acts on the mandate, never on a transaction.
       Swaps require a minimum (plan and decisions: docs/m4-plan.md)
-- [ ] v0.1 release (beta): a small benchmark, README polish, demo GIF, quickstart,
-      threat model; make the repo public. Ships with the gaps THREAT_MODEL.md
-      documents, including off-chain signatures (M7) and the unchecked router minimum
+- [x] v0.1 release (beta): a scenario suite (illustrative, not yet a benchmark),
+      README, quickstart, threat model, whole-history secrets audit; repo made public.
+      Ships with the gaps THREAT_MODEL.md documents, including off-chain signatures
+      (M7) and the unchecked router minimum (plan and decisions: docs/v0.1-plan.md)
 - [ ] Router calldata check: decode known router calldata (SwapRouter02
       `exactInputSingle`, `exactInput`, `multicall`) and require the router's own
       `amountOutMinimum` to be at least the mandate's minimum for the amount sold.
@@ -106,7 +107,8 @@ Env & deps: `uv sync`, then `uv run pytest`, `uv run ruff check .`.
 - [ ] M5: Standing mandates: per-period budgets and transaction caps, expiries beyond
       24 hours, renewal and revocation. Human input once per mandate, never per
       transaction; transaction-time decisions are fully automated
-- [ ] M6: Real agent integration; demo an injection that rule-based guardrails miss.
+- [ ] M6: Real agent integration; demo an injection that rule-based guardrails miss
+      (with a recording: the demo GIF dropped from v0.1).
       Capture must sit in front of the agent: the user's instruction reaches the
       firewall before the agent reads any untrusted content
 - [ ] M7: Pre-sign / typed-data inspection: check EIP-712 signatures before the agent
@@ -116,13 +118,4 @@ Env & deps: `uv sync`, then `uv run pytest`, `uv run ruff check .`.
 - [ ] M9: User-wallet EIP-712 mandate signing: the user's own wallet signs the canonical
       mandate and the firewall checks the signer
 
-**Current milestone: v0.1 release**
-
-## How to work with me
-- I'm a CS/AI engineering student building this to learn deeply and to ship
-  something real. Explain your reasoning step by step, with examples.
-- Propose a plan before writing significant code; wait for my OK.
-- Explain *why* the code works, not just what it does, especially for
-  blockchain concepts (transactions, RLP, calldata, ABIs, forking).
-- Push back when a design choice is weak or insecure, and suggest better options.
-- Keep me focused on the current milestone.
+**Current milestone: router calldata check**

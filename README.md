@@ -1,16 +1,16 @@
-# Mandate Firewall (beta, work in progress)
+# Mandate Firewall
 
-Open-source, wallet-agnostic firewall for AI agents that transact onchain.
-It checks each transaction an agent sends against the user's original instruction
-(the *mandate*) and blocks anything that doesn't match.
+**v0.1 beta. Testnets and local forks only.**
 
-**Status: Milestone 4 complete.** Today this is a JSON-RPC proxy with a strict
-default-deny front door. You lock a *mandate* (what the agent may send or swap,
-to whom, via which venue, how much in total, for how long, in how many
-transactions) with the capture CLI, before the agent starts. The proxy runs
-every transaction on a private fork of the chain *before* forwarding it, and a
-deterministic matcher compares what the transaction actually did (ETH and token
-movements, approvals, contracts called) with the mandate:
+An open-source, wallet-agnostic firewall for AI agents that transact onchain. You
+tell the firewall what you want done (the *mandate*: send at most 0.01 ETH to Bob;
+swap at most 100 USDC for at least 0.03 WETH on Uniswap) before the agent reads
+anything untrusted. Every transaction the agent then signs is run on a private fork
+of the chain, and a deterministic matcher compares what it *actually does* with
+what you asked. Anything else is blocked. It catches the prompt-injected
+transaction that passes every spend limit and allowlist: the right router, the
+right token, within budget, with the output going to an attacker. No LLM allows or
+blocks anything.
 
 ```
 BLOCKED  tx 0xa679…8640
@@ -26,16 +26,65 @@ Why:
 Nothing was charged.
 ```
 
-It catches transactions that pass every spend limit and allowlist but aren't
-what you asked for: a swap through the right router, of the right token, within
-budget, whose output goes to an attacker. It blocks off-mandate transactions,
-escalates ones it can't interpret (blocks them with a louder alert), and
-charges allowed ones against the mandate's budgets. No LLM decides anything.
+It sits in front of whatever wallet guardrails you already use (an RPC proxy
+today). It never touches private keys: it inspects transactions the agent has
+already signed and refuses to forward the ones that don't match.
 
-Verification is only as good as the simulation: a contract that behaves in
-simulation and steals on chain still gets through. Read
-[THREAT_MODEL.md](THREAT_MODEL.md) for exactly what it does and doesn't protect
-against. Use testnets and local forks only.
+## Known gaps (read before use)
+
+[THREAT_MODEL.md](THREAT_MODEL.md) lists everything. These five matter most:
+
+- **Off-chain signatures aren't seen.** An injected agent can sign a Permit2 or
+  EIP-2612 permit and hand it to an attacker, who spends it from their own
+  account. No transaction passes through the firewall. This is the most common
+  drainer pattern today. Fix planned: M7.
+  [Details](THREAT_MODEL.md#off-chain-signatures)
+- **The swap minimum holds for the simulated fill, not the real one.** The router's
+  own `amountOutMinimum` isn't decoded yet, so if the price moves between
+  simulation and inclusion, an agent that set it to 0 gets a worse fill. Fix
+  planned right after v0.1.
+  [Details](THREAT_MODEL.md#simulation-can-differ-from-what-happens-on-chain)
+- **Effects are only as true as the simulation.** A contract that behaves in
+  simulation and steals on chain (time bombs, simulation detection) gets an
+  "allow".
+  [Details](THREAT_MODEL.md#effects-are-only-as-true-as-the-simulation-now-the-main-gap)
+- **An agent that bypasses the proxy isn't checked**, nor is anything running as
+  the firewall's OS user. If the agent holds its own key and has another RPC URL,
+  or can write the mandate store, the firewall can't help. Run the agent as a
+  separate user or container whose only network route to a chain is the proxy.
+  [Bypassing the proxy](THREAT_MODEL.md#bypassing-the-proxy),
+  [same-host compromise](THREAT_MODEL.md#same-host-compromise)
+- **Beta.** Mandates are one-shot (at most 24 hours), the proxy has no
+  authentication, and the code hasn't been audited. Never use real funds.
+  [Everything it doesn't protect against](THREAT_MODEL.md#what-it-does-not-protect-against)
+
+## Scenario suite (v0.1)
+
+Seventeen scenarios, each run on a fresh local anvil chain against three defenses:
+no defense, a rule-based guard built mechanically from the same mandate
+(allowlisted targets, recipients and spenders, spend limits, capped approvals),
+and the firewall. Harm is judged from balances on chain, not from the defenses'
+own reports.
+
+| Defense | Attacks stopped | Benign passed |
+|---|---|---|
+| none | 0/10 | 7/7 |
+| rules | 4/10 | 6/7 |
+| firewall | 7/10 | 5/7 |
+
+The rules stop the obvious attacks: a transfer to an unknown address, an approval
+to an unknown spender, going over budget. They miss the three swaps that use the
+right router, token and amount: output sent to the attacker, a multicall that
+sweeps the input away, and a manipulated price. The firewall blocks all three.
+**It also misses three attacks**, which the table counts against it: a price move
+after simulation, an off-chain permit, and a fill pushed down to exactly your
+minimum (allowed by design). It has two false positives: an unlimited approval,
+and approve + swap sent without waiting for the approval to be mined.
+
+The defender wrote these scenarios, so they illustrate the defenses rather than
+measure them. A benchmark on third-party scenarios is roadmap item M8. Every cell,
+the rule guard's exact configuration and the method are in
+[benchmark/RESULTS.md](benchmark/RESULTS.md).
 
 ## Quickstart
 
@@ -56,9 +105,9 @@ anvil --chain-id 84532
 ```
 
 **2. Lock a mandate** (terminal 2). Give your instruction to the firewall, not to
-the agent. An agent may already have read a poisoned web page, and an
-instruction that passes through it can be rewritten. With the structured flags
-(no LLM, nothing leaves your machine):
+the agent: an agent may already have read a poisoned web page, and an instruction
+that passes through it can be rewritten. With structured flags (no LLM, nothing
+leaves your machine):
 
 ```bash
 uv run mandate-firewall mandate new --send 0.01 ETH \
@@ -81,36 +130,36 @@ Locked mandate 0x32528771a79aaada74f6fbd436a924d9e5fea69ccafbdac8fef1eecf44b532d
 Now give the agent its task.
 ```
 
-Read the summary before you type `yes`. Addresses are shown in full on purpose:
-look-alike addresses copy the first and last characters. The mandate is stored
-in `state/mandates.db` (mode `0600`), locked by its hash: to change it, revoke
-it and create a new one. It expires after `MANDATE_LIFETIME_MINUTES` (default
-30, at most 24 hours) or after `--max-transactions` transactions.
+Read the summary before you type `yes`. Addresses are shown in full on purpose,
+because look-alike addresses copy the first and last characters. The mandate is
+stored in `state/mandates.db` (mode `0600`) and locked by its hash: to change it,
+revoke it and create a new one. It expires after `MANDATE_LIFETIME_MINUTES`
+(default 30, at most 24 hours) or after `--max-transactions` transactions.
 
-Or write the instruction in words. An LLM parses it, and every amount, address
-and token in the result must appear in what you wrote, or the CLI asks you
-instead of guessing. Set `LLM_API_KEY` in `.env` (never on the command line),
-then:
-
-```bash
-uv run mandate-firewall mandate new "send 0.01 ETH to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
-```
-
-> **Privacy:** with an instruction in words, its full text, including amounts
-> and addresses, is sent to the LLM provider (`LLM_BASE_URL`, api.anthropic.com
-> by default). The CLI says so before it sends anything. The structured flags
-> (`--send … --to …`, `--swap … --for … --via … --min-out …`) use no LLM.
-
-A swap needs a minimum, the least you'll accept back. Without one, an agent
-could sell your tokens through the right router and receive almost nothing:
+A swap needs a minimum, the least you'll accept back. Without one, an agent could
+sell your tokens through the right router and receive almost nothing:
 
 ```bash
 uv run mandate-firewall mandate new --swap 100 USDC --for WETH --via uniswap --min-out 0.03
 ```
 
-Manage mandates with `mandate list`, `mandate show <id>` and
-`mandate revoke <id>` (an 8+ digit prefix of the id works). Revoking takes
-effect at the firewall's next transaction.
+Or write the instruction in words. An LLM parses it into the same structure, and
+every amount, address and token in the result must appear in what you wrote, or
+the CLI asks you instead of guessing. Set `LLM_API_KEY` in `.env`, never on the
+command line, then:
+
+```bash
+uv run mandate-firewall mandate new "send 0.01 ETH to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+```
+
+> **Privacy:** with an instruction in words, its full text, including amounts and
+> addresses, is sent to the LLM provider (`LLM_BASE_URL`, api.anthropic.com by
+> default). The CLI says so before it sends anything. The structured flags use no
+> LLM.
+
+Manage mandates with `mandate list`, `mandate show <id>` and `mandate revoke <id>`
+(an 8+ digit prefix of the id works). A revoke takes effect at the firewall's next
+transaction.
 
 **3. Start the firewall in front of the chain** (terminal 3):
 
@@ -118,90 +167,65 @@ effect at the firewall's next transaction.
 uv run mandate-firewall serve --upstream http://127.0.0.1:8545
 ```
 
-It opens the mandate store (and refuses to start without one), fetches the chain id from the upstream, then starts its own anvil as a fork
-of the upstream and checks the fork (same chain id, same block hash, tracing
-works). If anything fails, it refuses to start. It then listens on
-`http://127.0.0.1:8546`. Look for `simulation node ready` in its log.
+It refuses to start without a mandate store, without the upstream's chain id, or
+if its own anvil fork of the upstream fails its checks (same chain id, same block
+hash, tracing works). Then it listens on `http://127.0.0.1:8546`; look for
+`simulation node ready` in its log.
 
-**4. Point your agent's RPC URL at the firewall** (`http://127.0.0.1:8546`)
-instead of the node. The firewall never needs your private key: the agent signs
-as usual, and the firewall inspects (and simulates) the signed transaction.
-
-Try it with `cast` (terminal 4). The keys are anvil's public dev accounts 0 and 2:
+**4. Point your agent's RPC URL at the firewall** (`http://127.0.0.1:8546`). The
+agent signs as usual. Try it with `cast` (terminal 4), using anvil's public dev
+accounts 0 and 2:
 
 ```bash
 KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
 FW=http://127.0.0.1:8546
 
-# The transfer you asked for: simulated, verified, charged to the mandate, audited, forwarded, mined.
+# The transfer you asked for: simulated, verified, charged, audited, forwarded, mined.
 cast send --rpc-url $FW --private-key $KEY 0x70997970C51812dc3A010C7d01b50e0d17dc79C8 --value 0.004ether
 
-# The same account paying someone else: blocked (-32003, "off-mandate: ... recipient not in mandate").
+# Paying someone else: blocked (-32003, "off-mandate: ... recipient not in mandate").
 cast send --rpc-url $FW --private-key $KEY 0x000000000000000000000000000000000000dEaD --value 0.001ether
 
 # More than the 0.006 ETH left: blocked (-32003, "off-mandate: over budget").
 cast send --rpc-url $FW --private-key $KEY 0x70997970C51812dc3A010C7d01b50e0d17dc79C8 --value 0.007ether
 
-# An account with no mandate: blocked (-32003), never simulated, never reaches the node.
+# An account with no mandate: blocked, never simulated, never reaches the node.
 cast send --rpc-url $FW --private-key 0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a \
     0x70997970C51812dc3A010C7d01b50e0d17dc79C8 --value 0.01ether
 
-# Signed for another chain: blocked (-32003), never simulated, never reaches the node.
-cast send --rpc-url $FW --private-key $KEY --chain 1 --legacy 0x70997970C51812dc3A010C7d01b50e0d17dc79C8 --value 1
-
-# Asking the node to sign or cheat, or the firewall for a mandate: denied (-32601).
+# Anything but an allowlisted read method: denied (-32601).
 cast rpc --rpc-url $FW anvil_setBalance 0x70997970C51812dc3A010C7d01b50e0d17dc79C8 0x1
-cast rpc --rpc-url $FW mandate_new '{}'
 ```
 
-The agent's error says *why* (as a phrase and as codes in `error.data`, such
-as `wrong_recipient` or `over_budget`) but never your budget, what's left or
-your swap minimum: an injected agent could use those.
+The agent's error says *why*, as a phrase and as codes in `error.data` (such as
+`wrong_recipient` or `over_budget`), but never your budget, what's left, or your
+swap minimum: an injected agent could use those.
 
-**5. Read the alerts and the audit log.** Blocked and escalated transactions
-are listed with their full "You asked / This transaction" explanation. They are
-never held for approval: if one surprises you, revoke the mandate or lock a new
-one.
+**5. Read the alerts and the audit log.** Blocked and escalated transactions are
+listed with their full "You asked / This transaction" explanation. Nothing is held
+for approval: if one surprises you, revoke the mandate or lock a new one.
 
 ```bash
 uv run mandate-firewall alerts               # --escalations for anomalies only, --last N
+tail -n 3 logs/audit.jsonl | jq '{decision, reason, mandate_id, violations: [.verdict.violations[]?.code]}'
 ```
 
-The audit log has one JSON line per transaction, allowed or blocked. Each names
-the mandate it was checked against. Verified ones carry the effects, the
-verdict (decision, violations, anomalies, charges) and the explanation:
+The audit log has one JSON line per transaction, allowed or blocked, with the
+effects, the verdict and the explanation. It contains your mandate's values and
+the signed transactions, so the agent must not be able to read it. Integers are
+decimal strings, because 256-bit numbers don't survive JSON parsers that use
+floats.
+
+**6. Run the demos and the scenario suite.** These start their own anvil and
+firewall on spare ports in a temporary directory, so nothing else needs to be
+running.
 
 ```bash
-tail -n 3 logs/audit.jsonl | jq '{decision, reason, mandate_id, mandate_transaction, violations: [.verdict.violations[]?.code]}'
-tail -n 1 logs/audit.jsonl | jq -r .explanation
+scripts/demo_m4.sh             # payments and swaps, allowed and blocked, step by step (you type "yes" twice)
+scripts/demo_m3.sh             # mandates: no store, no mandate, the cap, a live revoke, a tampered store
+uv run python -m benchmark     # the full scenario suite (about a minute); rewrites benchmark/RESULTS.md
+uv run python -m benchmark --only A   # just the attack rows (also: B, M)
 ```
-
-The audit log contains your mandate's values (budgets, minimums) and signed
-transactions: the agent must not be able to read it.
-
-Integers (`value`, balance changes, token amounts, gas) are decimal strings,
-because 256-bit numbers don't survive JSON parsers that use floats.
-
-**6. The demos.** [`scripts/demo_m4.sh`](scripts/demo_m4.sh) needs nothing
-running: it starts its own anvil and firewall on spare ports, in a temporary
-directory it deletes at the end, pausing between steps. It locks "at most 0.01
-ETH to Bob" and shows a payment allowed and charged, a transfer to another
-address blocked, an over-budget payment blocked, and the exact rest of the
-budget allowed (the mandate is then used up). Then, on a mock router shaped
-like Uniswap's SwapRouter02, it locks "swap 100 mUSD for at least 0.03 mETH"
-and shows an unlimited approval blocked, an exact approval allowed, **a swap
-whose output goes to an attacker blocked**, a manipulated price blocked, a
-`pull` + `sweep` drain blocked, and the honest swap allowed. It ends with
-`mandate-firewall alerts`. You type `yes` twice.
-
-```bash
-scripts/demo_m4.sh
-```
-
-[`scripts/demo_m3.sh`](scripts/demo_m3.sh) is self-contained too. It shows
-mandates: the firewall refusing to start without a store, an account without a
-mandate blocked, the transaction cap, a live revoke, the missing mandate
-methods, and a tampered store row.
 
 ## Configuration
 
@@ -244,8 +268,8 @@ firewall never reads them, and never holds the LLM key:
 ```bash
 uv sync                  # creates .venv with Python 3.12 and installs dev deps
 uv run pytest            # all tests; anvil/forge ones are skipped if Foundry isn't installed
+uv run pytest -m anvil   # only the integration tests against a real anvil (includes the scenario suite)
 uv run pytest -m llm     # opt-in: the live LLM extractor test (needs LLM_API_KEY; costs a few calls)
-uv run pytest -m anvil   # only the integration tests against a real anvil
 uv run ruff check .      # lint
 uv run ruff format .     # format
 ```
@@ -254,6 +278,30 @@ The test contracts in `tests/fixtures/contracts/` are committed as compiled
 artifacts, so tests don't need a Solidity compiler. To rebuild them (forge, solc
 0.8.37): `uv run python tests/fixtures/contracts/build.py`, or add `--check` to
 verify the committed artifacts are reproducible.
+
+Secrets checks over the whole git history: `uv run python scripts/audit_history.py`
+(identities, every path ever committed, 64-hex values, URL credentials; exits 1 on
+a flag) and [gitleaks](https://github.com/gitleaks/gitleaks) with the repo's
+[.gitleaks.toml](.gitleaks.toml) (`gitleaks git --log-opts=--all --redact .`).
+The only allowlisted values are anvil's public dev keys and plain addresses.
+
+Each milestone starts from a written plan with its decisions:
+[M2](docs/m2-plan.md), [M3](docs/m3-plan.md), [M4](docs/m4-plan.md),
+[v0.1](docs/v0.1-plan.md).
+
+## How this was built
+
+Built with [Claude Code](https://claude.com/claude-code) as an AI pair
+programmer. Every design decision was reviewed, and every milestone was verified
+by hand before the next one started. The plans linked above record those
+decisions, including the ones that changed along the way.
+
+## Security
+
+This is beta software for testnets and local forks. Please report
+vulnerabilities privately through GitHub's private vulnerability reporting (the
+repository's Security tab), not in a public issue. What the firewall does and
+doesn't claim to protect against is in [THREAT_MODEL.md](THREAT_MODEL.md).
 
 ## License
 

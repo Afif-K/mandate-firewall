@@ -8,9 +8,9 @@ version = "0.0.1"
 description = "Wallet-agnostic firewall that verifies AI agent transactions against the user's mandate (beta)."
 readme = "README.md"
 license = "Apache-2.0"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.11"
-authors = [{ name = "Afif-K" }]
+authors = [{ name = "Afif Kawalit" }]
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
     "Programming Language :: Python :: 3",

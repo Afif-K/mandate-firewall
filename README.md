@@ -1,34 +1,57 @@
 # Mandate Firewall
 
-**v0.1 beta. Testnets and local forks only.**
+By [Afif Kawalit](https://github.com/Afif-K)
+
+**Stops AI agents from sending onchain transactions you didn't authorize, including
+the ones that pass every spend limit and allowlist.**
+
+v0.1 beta, for testnets and local forks only.
 
 An open-source, wallet-agnostic firewall for AI agents that transact onchain. You
 tell the firewall what you want done (the *mandate*: send at most 0.01 ETH to Bob;
 swap at most 100 USDC for at least 0.03 WETH on Uniswap) before the agent reads
 anything untrusted. Every transaction the agent then signs is run on a private fork
 of the chain, and a deterministic matcher compares what it *actually does* with
-what you asked. Anything else is blocked. It catches the prompt-injected
-transaction that passes every spend limit and allowlist: the right router, the
-right token, within budget, with the output going to an attacker. No LLM allows or
-blocks anything.
+what you asked. Anything else is blocked: for example, a swap through the right
+router, of the right token, within budget, whose output goes to an attacker. No
+LLM allows or blocks anything.
+
+Quickstart step 4 below, paying `0xdEaD` instead of Bob, as
+`mandate-firewall alerts` prints it:
 
 ```
-BLOCKED  tx 0xa679…8640
-  under mandate 0x647d…b7f9
-You asked:
-  1. SEND at most 0.01 ETH (native)
-       to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8
-       left before this transaction: 0.006 ETH
-This transaction:
-  sends 0.001 ETH (native) to 0x000000000000000000000000000000000000dEaD
-Why:
-  - it sends 0.001 ETH (native) to 0x000000000000000000000000000000000000dEaD, a recipient your mandate doesn't name
-Nothing was charged.
+  BLOCKED  tx 0x2e9804b4bf30dfe41384b03ff154243629f37a52e85e5d79691e105e3e6e940e
+    under mandate 0x0f8d6f5038873791e4772a55fe0018f2ec3c600a42c089f949ce204e6f2f769e
+  You asked:
+    you said: "send 0.01 ETH to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+    1. SEND at most 0.01 ETH (native)
+         to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8
+         left before this transaction: 0.006 ETH
+  This transaction:
+    sends 0.001 ETH (native) to 0x000000000000000000000000000000000000dEaD
+  Why:
+    - it calls 0x000000000000000000000000000000000000dEaD, which your mandate doesn't name
+    - it sends 0.001 ETH (native) to 0x000000000000000000000000000000000000dEaD, a recipient your mandate doesn't name
+  Nothing was charged.
+```
+
+## How it works
+
+```mermaid
+flowchart LR
+    U([You]) -->|"1. lock a mandate, before the agent starts"| M[(Mandate store)]
+    A([AI agent]) -->|"2. signed transaction"| P[Firewall: RPC proxy]
+    P -->|"3. simulate on a private fork"| S[Effects: who gets what]
+    S --> V{"4. Deterministic matcher"}
+    M --> V
+    V -->|matches the mandate| F[Charge the budget, forward to the chain]
+    V -->|"doesn't match, or can't be checked"| B[Block + alert]
 ```
 
 It sits in front of whatever wallet guardrails you already use (an RPC proxy
 today). It never touches private keys: it inspects transactions the agent has
-already signed and refuses to forward the ones that don't match.
+already signed and refuses to forward the ones that don't match. If decoding,
+simulation or verification fails, the transaction is blocked.
 
 ## Known gaps (read before use)
 
@@ -37,12 +60,12 @@ already signed and refuses to forward the ones that don't match.
 - **Off-chain signatures aren't seen.** An injected agent can sign a Permit2 or
   EIP-2612 permit and hand it to an attacker, who spends it from their own
   account. No transaction passes through the firewall. This is the most common
-  drainer pattern today. Fix planned: M7.
+  drainer pattern today. Fix planned: M7 ([roadmap](#roadmap)).
   [Details](THREAT_MODEL.md#off-chain-signatures)
 - **The swap minimum holds for the simulated fill, not the real one.** The router's
   own `amountOutMinimum` isn't decoded yet, so if the price moves between
   simulation and inclusion, an agent that set it to 0 gets a worse fill. Fix
-  planned right after v0.1.
+  planned right after v0.1 ([roadmap](#roadmap)).
   [Details](THREAT_MODEL.md#simulation-can-differ-from-what-happens-on-chain)
 - **Effects are only as true as the simulation.** A contract that behaves in
   simulation and steals on chain (time bombs, simulation detection) gets an
@@ -85,6 +108,24 @@ The defender wrote these scenarios, so they illustrate the defenses rather than
 measure them. A benchmark on third-party scenarios is roadmap item M8. Every cell,
 the rule guard's exact configuration and the method are in
 [benchmark/RESULTS.md](benchmark/RESULTS.md).
+
+## Roadmap
+
+- **Next: the router minimum check.** Decode the router's own calldata and require
+  its `amountOutMinimum` to be at least your mandate's minimum, so the real fill is
+  protected, not only the simulated one. Router calls it can't decode are blocked.
+- **M5, standing mandates:** per-period budgets and transaction caps, expiries
+  beyond 24 hours, renewal and revocation. You approve once per mandate, never per
+  transaction.
+- **M6, real agent integration:** a real agent behind the firewall, and a demo of
+  an injection that rule-based guardrails miss.
+- **M7, off-chain signature inspection:** check EIP-712 signatures (Permit2 and
+  EIP-2612 permits at least) before the agent signs them.
+- **M8, a third-party benchmark:** scenarios built on existing agent-security
+  benchmarks (CrAIBench, AgentDojo) instead of ones the defender wrote, with an open
+  dataset and a writeup.
+- **M9, wallet-signed mandates:** your own wallet signs the mandate, so a process on
+  the firewall's host can't create one.
 
 ## Quickstart
 
@@ -183,7 +224,7 @@ FW=http://127.0.0.1:8546
 # The transfer you asked for: simulated, verified, charged, audited, forwarded, mined.
 cast send --rpc-url $FW --private-key $KEY 0x70997970C51812dc3A010C7d01b50e0d17dc79C8 --value 0.004ether
 
-# Paying someone else: blocked (-32003, "off-mandate: ... recipient not in mandate").
+# Paying someone else: blocked (-32003, "off-mandate: target contract not in mandate; recipient not in mandate").
 cast send --rpc-url $FW --private-key $KEY 0x000000000000000000000000000000000000dEaD --value 0.001ether
 
 # More than the 0.006 ETH left: blocked (-32003, "off-mandate: over budget").
@@ -291,10 +332,13 @@ Each milestone starts from a written plan with its decisions:
 
 ## How this was built
 
-Built with [Claude Code](https://claude.com/claude-code) as an AI pair
-programmer. Every design decision was reviewed, and every milestone was verified
-by hand before the next one started. The plans linked above record those
-decisions, including the ones that changed along the way.
+Designed and built by Afif Kawalit, using [Claude Code](https://claude.com/claude-code)
+as an AI pair programmer. I set the direction and made the design decisions (the
+mandate model, the trust boundary, standing mandates on the roadmap, requiring swap
+minimums and checksummed addresses), reviewed every plan before any code was
+written, and verified every milestone by hand with live demos before starting the
+next. The plans in [docs/](docs/) record those decisions, including the ones that
+changed along the way.
 
 ## Security
 

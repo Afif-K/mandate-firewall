@@ -66,7 +66,7 @@ user instruction -> [mandate capture] -> locked mandate
 Entry points: RPC proxy first; later an MCP server and wallet pre-sign hooks.
 
 ## Tech stack
-Python 3.12 (pinned via uv; package supports >=3.11), web3.py, FastAPI, Foundry/Anvil, Pydantic, SQLite, an LLM API,
+Python 3.12 (pinned via uv; package requires >=3.12, the version CI tests), web3.py, FastAPI, Foundry/Anvil, Pydantic, SQLite, an LLM API,
 Slack/Telegram for escalation. Development on testnet (Base Sepolia).
 License: Apache-2.0. Packaging: pip-installable + Docker.
 Env & deps: `uv sync`, then `uv run pytest`, `uv run ruff check .`.

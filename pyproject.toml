@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mandate-firewall"
-version = "0.0.1"
+version = "0.1.0b1"
 description = "Wallet-agnostic firewall that verifies AI agent transactions against the user's mandate (beta)."
 readme = "README.md"
 license = "Apache-2.0"
@@ -12,7 +12,7 @@ license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.11"
 authors = [{ name = "Afif Kawalit" }]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 4 - Beta",
     "Programming Language :: Python :: 3",
     "Topic :: Security",
 ]
@@ -24,6 +24,12 @@ dependencies = [
     "pydantic-settings>=2.3",
     "web3>=7.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Afif-K/mandate-firewall"
+Source = "https://github.com/Afif-K/mandate-firewall"
+Issues = "https://github.com/Afif-K/mandate-firewall/issues"
+"Threat model" = "https://github.com/Afif-K/mandate-firewall/blob/main/THREAT_MODEL.md"
 
 [project.scripts]
 mandate-firewall = "mandate_firewall.cli:main"
@@ -63,9 +69,11 @@ markers = [
     "anvil: integration test that needs a local anvil binary (skipped if missing)",
     "forge: test that runs Foundry's forge (skipped if missing)",
     "llm: live call to the LLM API; costs money, so opt-in only: pytest -m llm",
+    "benchmark: a scenario-suite cell (51, about a minute); opt-in locally: pytest -m benchmark. CI runs them",
 ]
-# Live LLM tests never run by default. A later -m on the command line replaces this.
-addopts = ["-m", "not llm"]
+# Live LLM tests and the scenario-suite cells don't run by default. A later -m on the
+# command line replaces this one (CI runs -m "not llm").
+addopts = ["-m", "not llm and not benchmark"]
 # Starlette's TestClient prefers httpx2 and warns when falling back to httpx. We use
 # httpx on purpose (see docs/m2-plan.md, decision 4); silence only that one message.
 filterwarnings = [

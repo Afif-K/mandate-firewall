@@ -1,0 +1,72 @@
+# Lint, the full test suite (including the anvil and forge integration tests and
+# the 51 scenario-suite cells) and a wheel check, on every push to main and every
+# pull request.
+#
+# Security: read-only token, no secrets, `pull_request` (never
+# `pull_request_target`, which would run fork code with write access), the token
+# isn't stored in the checkout, and every action is pinned to a full commit SHA
+# (tags can be moved; the comment says which release it is).
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      # A missing anvil or forge fails the run instead of skipping its tests.
+      REQUIRE_FOUNDRY: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.13.7"
+
+      # The suite's results were recorded with anvil 1.8.3, and scenario M1 depends
+      # on how anvil orders pending transactions: keep this in step with RESULTS.md.
+      - uses: foundry-rs/foundry-toolchain@dba66c27052e63476d886f22216e119ba7e615bf # v1.9.2
+        with:
+          version: v1.8.3
+
+      - name: Tool versions
+        run: |
+          uv --version
+          anvil --version
+          forge --version
+
+      - name: Install (the lockfile must be up to date)
+        run: uv sync --locked
+
+      - name: Lint
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+
+      - name: Tests, including anvil, forge and the scenario suite (not the live LLM test)
+        run: uv run pytest -m "not llm" -ra
+
+      - name: The wheel contains only the package
+        run: |
+          uv build --wheel -o dist
+          uv run python - <<'EOF'
+          import glob, sys, zipfile
+          names = zipfile.ZipFile(glob.glob("dist/*.whl")[0]).namelist()
+          stray = [n for n in names if n.split("/")[0] in {"benchmark", "tests", "scripts", "docs"}]
+          print("\n".join(names))
+          sys.exit(f"not part of the package: {stray}" if stray else 0)
+          EOF

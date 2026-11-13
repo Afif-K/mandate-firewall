@@ -1,6 +1,6 @@
 {
   "suite": "mandate-firewall scenario suite v0.1",
-  "package_version": "0.0.1",
+  "package_version": "0.1.0b1",
   "anvil": "anvil 1.8.3",
   "results": [
     {

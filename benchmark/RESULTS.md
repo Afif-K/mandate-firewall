@@ -87,7 +87,7 @@ Mandates: **E** = send at most 0.01 ETH to Bob; **T** = send at most 100 mUSD to
   - **E**: allowlist {Bob}; spend limits ETH ≤ 10000000000000000 (base units)
   - **T**: allowlist {Bob, mUSD}; spend limits mUSD ≤ 100000000 (base units)
   - **S**: allowlist {mETH, mUSD, mockswap router}; spend limits mUSD ≤ 100000000 (base units)
-- Versions: mandate-firewall 0.0.1; anvil 1.8.3 (`--order fees`, the default).
+- Versions: mandate-firewall 0.1.0b1; anvil 1.8.3 (`--order fees`, the default).
 
 ## Not included
 

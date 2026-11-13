@@ -22,6 +22,7 @@ def registry(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 @pytest.mark.anvil
+@pytest.mark.benchmark
 @pytest.mark.parametrize("defense", DEFENSES)
 @pytest.mark.parametrize("scenario", SCENARIOS, ids=lambda s: s.id)
 def test_cell(scenario, defense: str, registry: Path, tmp_path: Path) -> None:  # noqa: ANN001

@@ -133,7 +133,7 @@ Requires [uv](https://docs.astral.sh/uv/) and [Foundry](https://book.getfoundry.
 `anvil` runs the firewall's private simulation fork, and the examples use `cast`.
 
 ```bash
-git clone <this repo> && cd mandate-firewall
+git clone https://github.com/Afif-K/mandate-firewall.git && cd mandate-firewall
 uv sync
 cp .env.example .env   # local defaults: agent account = anvil dev account 0, chain 84532
 ```
@@ -307,12 +307,13 @@ firewall never reads them, and never holds the LLM key:
 ## Development
 
 ```bash
-uv sync                  # creates .venv with Python 3.12 and installs dev deps
-uv run pytest            # all tests; anvil/forge ones are skipped if Foundry isn't installed
-uv run pytest -m anvil   # only the integration tests against a real anvil (includes the scenario suite)
-uv run pytest -m llm     # opt-in: the live LLM extractor test (needs LLM_API_KEY; costs a few calls)
-uv run ruff check .      # lint
-uv run ruff format .     # format
+uv sync                     # creates .venv with Python 3.12 and installs dev deps
+uv run pytest               # unit and integration tests; anvil/forge ones skip if Foundry isn't installed
+uv run pytest -m benchmark  # opt-in: the 51 scenario-suite cells (about a minute; CI runs them)
+uv run pytest -m anvil      # only the tests against a real anvil (includes the scenario suite)
+uv run pytest -m llm        # opt-in: the live LLM extractor test (needs LLM_API_KEY; costs a few calls)
+uv run ruff check .         # lint
+uv run ruff format .        # format
 ```
 
 The test contracts in `tests/fixtures/contracts/` are committed as compiled
@@ -343,9 +344,10 @@ changed along the way.
 ## Security
 
 This is beta software for testnets and local forks. Please report
-vulnerabilities privately through GitHub's private vulnerability reporting (the
-repository's Security tab), not in a public issue. What the firewall does and
-doesn't claim to protect against is in [THREAT_MODEL.md](THREAT_MODEL.md).
+vulnerabilities privately, as [SECURITY.md](SECURITY.md) describes, not in a
+public issue. What the firewall does and doesn't claim to protect against is in
+[THREAT_MODEL.md](THREAT_MODEL.md). Contributions: see
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

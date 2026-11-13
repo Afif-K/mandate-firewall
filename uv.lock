@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.12' and sys_platform == 'emscripten'",
@@ -931,7 +931,7 @@ wheels = [
 
 [[package]]
 name = "mandate-firewall"
-version = "0.0.1"
+version = "0.1.0b1"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },

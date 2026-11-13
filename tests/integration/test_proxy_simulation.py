@@ -103,7 +103,8 @@ def simulator_pid(proxy: Proxy) -> int:
 
 def command_line(pid: int) -> str:
     out = subprocess.run(  # noqa: S603
-        ["ps", "-o", "args=", "-p", str(pid)],  # noqa: S607
+        # -ww: unlimited width. Without a terminal, Linux ps cuts lines at 80 columns.
+        ["ps", "-ww", "-o", "args=", "-p", str(pid)],  # noqa: S607
         capture_output=True,
         text=True,
         check=True,

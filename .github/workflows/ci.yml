@@ -57,6 +57,11 @@ jobs:
           uv run ruff check .
           uv run ruff format --check .
 
+      # The artifact test builds offline, so solc must already be installed. forge
+      # downloads it here and checks its sha256 against binaries.soliditylang.org.
+      - name: Install solc 0.8.37 (sha256-checked) and check the committed artifacts
+        run: uv run python tests/fixtures/contracts/build.py --check --allow-download
+
       - name: Tests, including anvil, forge and the scenario suite (not the live LLM test)
         run: uv run pytest -m "not llm" -ra
 

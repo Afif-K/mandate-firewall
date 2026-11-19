@@ -26,8 +26,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
-      # A missing anvil or forge fails the run instead of skipping its tests.
+      # A missing anvil or forge fails the run instead of skipping its tests, and so
+      # does a missing Chrome for the website's browser tests.
       REQUIRE_FOUNDRY: "1"
+      REQUIRE_BROWSER: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -48,6 +50,7 @@ jobs:
           uv --version
           anvil --version
           forge --version
+          google-chrome --version
 
       - name: Install (the lockfile must be up to date)
         run: uv sync --locked
@@ -71,7 +74,7 @@ jobs:
           uv run python - <<'EOF'
           import glob, sys, zipfile
           names = zipfile.ZipFile(glob.glob("dist/*.whl")[0]).namelist()
-          stray = [n for n in names if n.split("/")[0] in {"benchmark", "tests", "scripts", "docs"}]
+          stray = [n for n in names if n.split("/")[0] in {"benchmark", "tests", "scripts", "docs", "website"}]
           print("\n".join(names))
           sys.exit(f"not part of the package: {stray}" if stray else 0)
           EOF

@@ -501,8 +501,6 @@ def build(out: Path, root: Path = ROOT) -> None:
     (out / "index.html").write_text(page)
     (out / "style.css").write_text(minify_css((root / "website" / "style.css").read_text()))
     shutil.copyfile(root / "website" / "replay.js", out / "replay.js")
-    # GitHub Pages: serve files as they are, no Jekyll processing.
-    (out / ".nojekyll").write_text("")
 
 
 def main(argv: list[str]) -> int:

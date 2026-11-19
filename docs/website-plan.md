@@ -61,6 +61,14 @@ lands and the suite is rerun, the site updates from the new data with no hand ed
   skip link, and a name for every link, button and control. Lighthouse needs DevTools or
   npm, so it is a manual check.
 
+- **2026-11-19, commit 7 (Pages workflow):** pins looked up with `gh api`:
+  `actions/upload-pages-artifact` v5.0.0 (`fc324d35…`, which pins its own inner
+  `actions/upload-artifact` by SHA) and `actions/deploy-pages` v5.0.1 (`368f8252…`);
+  checkout and setup-uv reuse ci.yml's pins. The build job also runs the site tests,
+  browser ones included (`REQUIRE_BROWSER=1`; ubuntu-24.04 has Chrome), and CI now sets
+  `REQUIRE_BROWSER=1` too, so they can't silently skip. `.nojekyll` is dropped: an
+  Actions-deployed site doesn't run Jekyll, and the upload action skips dotfiles anyway.
+
 ## Pushback (built into the plan)
 
 1. **"Real recorded runs" needs new suite output, and a test that keeps it honest.** Commit 1

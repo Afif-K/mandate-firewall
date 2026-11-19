@@ -1,0 +1,81 @@
+# Build the project website from the committed scenario-suite data and deploy it to
+# GitHub Pages (docs/website-plan.md §3). Runs when the site or its data changes on
+# main, or by hand.
+#
+# Security, as in ci.yml: every action pinned to a full commit SHA (the comment says
+# which release; upload-pages-artifact pins its own inner action by SHA too), no
+# credentials kept in the checkout, no secrets. Permissions are per job: the build
+# job (which runs the repo's code and tests) can only read; only the deploy job,
+# which runs no repo code, can write to Pages and mint the OIDC token Pages requires.
+# The github-pages environment limits deploys to main (repo settings).
+
+name: Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "website/**"
+      - "benchmark/results.json"
+      - "benchmark/traces.json"
+      - "scripts/build_site.py"
+      - "tests/test_site.py"
+      - "tests/test_site_browser.py"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions: {}
+
+# One deploy at a time, and a running one is never cancelled halfway.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      # The browser tests (layout, player, CSP) fail instead of skipping without Chrome.
+      REQUIRE_BROWSER: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.13.7"
+
+      - name: Install (the lockfile must be up to date)
+        run: uv sync --locked
+
+      - name: Chrome version
+        run: google-chrome --version
+
+      - name: Site tests (every shown value, CSP, contrast, layout, the player)
+        run: uv run pytest tests/test_site.py tests/test_site_browser.py -ra
+
+      - name: Build
+        run: uv run python scripts/build_site.py _site
+
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

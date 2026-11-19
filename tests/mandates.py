@@ -32,8 +32,10 @@ def native_transfer_mandate(
     max_transactions: int = 3,
     recipient: str = BOB,
     budget: int = 10**18,
+    instruction: str | None = None,
 ) -> Mandate:
-    """A mandate to send up to `budget` wei (1 ETH) to `recipient` (Bob)."""
+    """A mandate to send up to `budget` wei (1 ETH) to `recipient` (Bob).
+    `instruction` is the user's words it records (default: the amount in wei)."""
     intent = TransferIntent(
         kind="transfer",
         asset=AssetRef(chain_id=chain_id, address=None, decimals=18),
@@ -47,7 +49,7 @@ def native_transfer_mandate(
         created_at=created_at,
         minutes=minutes,
         max_transactions=max_transactions,
-        instruction=f"send up to {budget} wei to {recipient}",
+        instruction=instruction or f"send up to {budget} wei to {recipient}",
     )
 
 

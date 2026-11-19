@@ -30,7 +30,7 @@
   "mandates": {
     "E": {
       "label": "<mandate E>",
-      "instruction": "send up to 10000000000000000 wei to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+      "instruction": "send at most 0.01 ETH to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
       "lines": [
         "  1. SEND at most 0.01 ETH (native)",
         "       to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
@@ -239,7 +239,7 @@
             ],
             "anomalies": [],
             "simulation_error": null,
-            "explanation": "BLOCKED  tx 0x9e57601af45603c21688121bef4bad29f0650628668a110a5708bd79b9849751\n  under mandate <mandate E>\nYou asked:\n  you said: \"send up to 10000000000000000 wei to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\"\n  1. SEND at most 0.01 ETH (native)\n       to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\n       left before this transaction: 0.01 ETH\nThis transaction:\n  sends 0.004 ETH (native) to 0x14dC79964da2C08b23698B3D3cc7Ca32193d9955\nWhy:\n  - it calls 0x14dC79964da2C08b23698B3D3cc7Ca32193d9955, which your mandate doesn't name\n  - it sends 0.004 ETH (native) to 0x14dC79964da2C08b23698B3D3cc7Ca32193d9955, a recipient your mandate doesn't name\nNothing was charged."
+            "explanation": "BLOCKED  tx 0x9e57601af45603c21688121bef4bad29f0650628668a110a5708bd79b9849751\n  under mandate <mandate E>\nYou asked:\n  you said: \"send at most 0.01 ETH to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\"\n  1. SEND at most 0.01 ETH (native)\n       to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\n       left before this transaction: 0.01 ETH\nThis transaction:\n  sends 0.004 ETH (native) to 0x14dC79964da2C08b23698B3D3cc7Ca32193d9955\nWhy:\n  - it calls 0x14dC79964da2C08b23698B3D3cc7Ca32193d9955, which your mandate doesn't name\n  - it sends 0.004 ETH (native) to 0x14dC79964da2C08b23698B3D3cc7Ca32193d9955, a recipient your mandate doesn't name\nNothing was charged."
           }
         }
       ]
@@ -945,7 +945,7 @@
             "violations": [],
             "anomalies": [],
             "simulation_error": null,
-            "explanation": "ALLOWED  tx 0x674632f52ccbafc8d5ba2cf1433ef8e897c33ef204a2a11bb276549cffc9dc7d\n  under mandate <mandate E>\nYou asked:\n  you said: \"send up to 10000000000000000 wei to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\"\n  1. SEND at most 0.01 ETH (native)\n       to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\n       left before this transaction: 0.01 ETH\nThis transaction:\n  sends 0.004 ETH (native) to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\nCharged:\n  intent 1: 0.004 ETH (native), 0.006 ETH left"
+            "explanation": "ALLOWED  tx 0x674632f52ccbafc8d5ba2cf1433ef8e897c33ef204a2a11bb276549cffc9dc7d\n  under mandate <mandate E>\nYou asked:\n  you said: \"send at most 0.01 ETH to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\"\n  1. SEND at most 0.01 ETH (native)\n       to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\n       left before this transaction: 0.01 ETH\nThis transaction:\n  sends 0.004 ETH (native) to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\nCharged:\n  intent 1: 0.004 ETH (native), 0.006 ETH left"
           }
         },
         {
@@ -969,7 +969,7 @@
             "violations": [],
             "anomalies": [],
             "simulation_error": null,
-            "explanation": "ALLOWED  tx 0xf5facf73e267df6de6f44c1a6e210c884e271c77c6ec0da56cd24b22d16b900a\n  under mandate <mandate E>\nYou asked:\n  you said: \"send up to 10000000000000000 wei to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\"\n  1. SEND at most 0.01 ETH (native)\n       to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\n       left before this transaction: 0.006 ETH\nThis transaction:\n  sends 0.004 ETH (native) to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\nCharged:\n  intent 1: 0.004 ETH (native), 0.002 ETH left"
+            "explanation": "ALLOWED  tx 0xf5facf73e267df6de6f44c1a6e210c884e271c77c6ec0da56cd24b22d16b900a\n  under mandate <mandate E>\nYou asked:\n  you said: \"send at most 0.01 ETH to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\"\n  1. SEND at most 0.01 ETH (native)\n       to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\n       left before this transaction: 0.006 ETH\nThis transaction:\n  sends 0.004 ETH (native) to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\nCharged:\n  intent 1: 0.004 ETH (native), 0.002 ETH left"
           }
         },
         {
@@ -990,7 +990,7 @@
             ],
             "anomalies": [],
             "simulation_error": null,
-            "explanation": "BLOCKED  tx 0x26e773689f67ce4985f025d38bc7eba8b3ce9e1758e934f0f6b9c0b83e4509aa\n  under mandate <mandate E>\nYou asked:\n  you said: \"send up to 10000000000000000 wei to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\"\n  1. SEND at most 0.01 ETH (native)\n       to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\n       left before this transaction: 0.002 ETH\nThis transaction:\n  sends 0.004 ETH (native) to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\nWhy:\n  - it spends 0.004 ETH (native) under intent 1, but only 0.002 ETH (native) is left\nNothing was charged."
+            "explanation": "BLOCKED  tx 0x26e773689f67ce4985f025d38bc7eba8b3ce9e1758e934f0f6b9c0b83e4509aa\n  under mandate <mandate E>\nYou asked:\n  you said: \"send at most 0.01 ETH to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\"\n  1. SEND at most 0.01 ETH (native)\n       to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\n       left before this transaction: 0.002 ETH\nThis transaction:\n  sends 0.004 ETH (native) to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\nWhy:\n  - it spends 0.004 ETH (native) under intent 1, but only 0.002 ETH (native) is left\nNothing was charged."
           }
         }
       ]
@@ -3226,7 +3226,7 @@
             "violations": [],
             "anomalies": [],
             "simulation_error": null,
-            "explanation": "ALLOWED  tx 0x674632f52ccbafc8d5ba2cf1433ef8e897c33ef204a2a11bb276549cffc9dc7d\n  under mandate <mandate E>\nYou asked:\n  you said: \"send up to 10000000000000000 wei to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\"\n  1. SEND at most 0.01 ETH (native)\n       to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\n       left before this transaction: 0.01 ETH\nThis transaction:\n  sends 0.004 ETH (native) to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\nCharged:\n  intent 1: 0.004 ETH (native), 0.006 ETH left"
+            "explanation": "ALLOWED  tx 0x674632f52ccbafc8d5ba2cf1433ef8e897c33ef204a2a11bb276549cffc9dc7d\n  under mandate <mandate E>\nYou asked:\n  you said: \"send at most 0.01 ETH to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\"\n  1. SEND at most 0.01 ETH (native)\n       to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\n       left before this transaction: 0.01 ETH\nThis transaction:\n  sends 0.004 ETH (native) to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\nCharged:\n  intent 1: 0.004 ETH (native), 0.006 ETH left"
           }
         }
       ]
@@ -4260,7 +4260,7 @@
             "violations": [],
             "anomalies": [],
             "simulation_error": null,
-            "explanation": "ALLOWED  tx 0x674632f52ccbafc8d5ba2cf1433ef8e897c33ef204a2a11bb276549cffc9dc7d\n  under mandate <mandate E>\nYou asked:\n  you said: \"send up to 10000000000000000 wei to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\"\n  1. SEND at most 0.01 ETH (native)\n       to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\n       left before this transaction: 0.01 ETH\nThis transaction:\n  sends 0.004 ETH (native) to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\nCharged:\n  intent 1: 0.004 ETH (native), 0.006 ETH left"
+            "explanation": "ALLOWED  tx 0x674632f52ccbafc8d5ba2cf1433ef8e897c33ef204a2a11bb276549cffc9dc7d\n  under mandate <mandate E>\nYou asked:\n  you said: \"send at most 0.01 ETH to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\"\n  1. SEND at most 0.01 ETH (native)\n       to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\n       left before this transaction: 0.01 ETH\nThis transaction:\n  sends 0.004 ETH (native) to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\nCharged:\n  intent 1: 0.004 ETH (native), 0.006 ETH left"
           }
         },
         {

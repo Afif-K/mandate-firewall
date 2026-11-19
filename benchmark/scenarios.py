@@ -42,7 +42,11 @@ SWAP_MIN_OUT = 30_000  # 0.03 mETH for 100 mUSD: the S mandate's minimum
 def mandate(which: str) -> Mandate:
     if which == "E":
         return native_transfer_mandate(
-            CHAIN_ID, AGENT, budget=10 * MILLI, max_transactions=MAX_TRANSACTIONS
+            CHAIN_ID,
+            AGENT,
+            budget=10 * MILLI,
+            max_transactions=MAX_TRANSACTIONS,
+            instruction=f"send at most 0.01 ETH to {BOB}",
         )
     if which == "T":
         return mandate_with(

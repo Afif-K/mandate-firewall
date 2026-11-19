@@ -264,7 +264,7 @@ running.
 ```bash
 scripts/demo_m4.sh             # payments and swaps, allowed and blocked, step by step (you type "yes" twice)
 scripts/demo_m3.sh             # mandates: no store, no mandate, the cap, a live revoke, a tampered store
-uv run python -m benchmark     # the full scenario suite (about a minute); rewrites benchmark/RESULTS.md
+uv run python -m benchmark     # the full scenario suite (about a minute); rewrites benchmark/RESULTS.md and traces.json
 uv run python -m benchmark --only A   # just the attack rows (also: B, M)
 ```
 

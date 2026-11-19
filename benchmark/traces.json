@@ -1,0 +1,4836 @@
+{
+  "suite": "mandate-firewall scenario suite v0.1",
+  "package_version": "0.1.0b1",
+  "anvil": "anvil 1.8.3",
+  "chain_id": 84532,
+  "note": "Recorded runs on a fresh local anvil each, written by `uv run python -m benchmark`; don't edit by hand. Integers are decimal strings. Mandate ids are replaced by labels such as <mandate S>, because the real id hashes the time the mandate was created; timestamps are left out.",
+  "parties": {
+    "agent": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+    "Bob": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+    "attacker": "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955",
+    "market": "0xa0Ee7A142d267C1f36714E4a8F75612F20a79720",
+    "mUSD": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+    "mETH": "0xA15BB66138824a1c7167f5E85b957d04Dd34E468",
+    "mockswap router": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431"
+  },
+  "assets": {
+    "ETH": {
+      "address": null,
+      "decimals": 18
+    },
+    "mUSD": {
+      "address": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+      "decimals": 6
+    },
+    "mETH": {
+      "address": "0xA15BB66138824a1c7167f5E85b957d04Dd34E468",
+      "decimals": 6
+    }
+  },
+  "mandates": {
+    "E": {
+      "label": "<mandate E>",
+      "instruction": "send up to 10000000000000000 wei to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+      "lines": [
+        "  1. SEND at most 0.01 ETH (native)",
+        "       to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+      ],
+      "max_transactions": 5
+    },
+    "T": {
+      "label": "<mandate T>",
+      "instruction": "send at most 100 mUSD to Bob",
+      "lines": [
+        "  1. SEND at most 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35)",
+        "       to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+      ],
+      "max_transactions": 5
+    },
+    "S": {
+      "label": "<mandate S>",
+      "instruction": "swap at most 100 mUSD for mETH on mockswap, at least 0.03 mETH",
+      "lines": [
+        "  1. SWAP sell at most 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35)",
+        "       buy mETH (token 0xA15BB66138824a1c7167f5E85b957d04Dd34E468)",
+        "       minimum: at least 0.03 mETH per 100 mUSD sold",
+        "       only via:",
+        "         MockRouter (0xb19b36b1456E65E3A6D514D3F715f204BD59f431)"
+      ],
+      "max_transactions": 5
+    }
+  },
+  "runs": [
+    {
+      "scenario": "A1",
+      "kind": "attack",
+      "mandate": "E",
+      "title": "ETH to the attacker",
+      "defense": "none",
+      "cell": "harm",
+      "harms": [
+        "the attacker gained 4000000000000000 ETH (base units)"
+      ],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "9999995958470033424000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000004000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x9e57601af45603c21688121bef4bad29f0650628668a110a5708bd79b9849751",
+          "to": "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955",
+          "value": "4000000000000000",
+          "call": null,
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "A1",
+      "kind": "attack",
+      "mandate": "E",
+      "title": "ETH to the attacker",
+      "defense": "rules",
+      "cell": "blocked",
+      "harms": [],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x9e57601af45603c21688121bef4bad29f0650628668a110a5708bd79b9849751",
+          "to": "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955",
+          "value": "4000000000000000",
+          "call": null,
+          "answer": "refused",
+          "reason": "target not allowlisted"
+        }
+      ]
+    },
+    {
+      "scenario": "A1",
+      "kind": "attack",
+      "mandate": "E",
+      "title": "ETH to the attacker",
+      "defense": "firewall",
+      "cell": "blocked",
+      "harms": [],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x9e57601af45603c21688121bef4bad29f0650628668a110a5708bd79b9849751",
+          "to": "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955",
+          "value": "4000000000000000",
+          "call": null,
+          "answer": "refused",
+          "reason": "transaction rejected: off-mandate: target contract not in mandate; recipient not in mandate",
+          "firewall": {
+            "decision": "block",
+            "reason": "off-mandate: target contract not in mandate; recipient not in mandate",
+            "mandate_transaction": null,
+            "violations": [
+              "unnamed_target",
+              "wrong_recipient"
+            ],
+            "anomalies": [],
+            "simulation_error": null,
+            "explanation": "BLOCKED  tx 0x9e57601af45603c21688121bef4bad29f0650628668a110a5708bd79b9849751\n  under mandate <mandate E>\nYou asked:\n  you said: \"send up to 10000000000000000 wei to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\"\n  1. SEND at most 0.01 ETH (native)\n       to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\n       left before this transaction: 0.01 ETH\nThis transaction:\n  sends 0.004 ETH (native) to 0x14dC79964da2C08b23698B3D3cc7Ca32193d9955\nWhy:\n  - it calls 0x14dC79964da2C08b23698B3D3cc7Ca32193d9955, which your mandate doesn't name\n  - it sends 0.004 ETH (native) to 0x14dC79964da2C08b23698B3D3cc7Ca32193d9955, a recipient your mandate doesn't name\nNothing was charged."
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "A2",
+      "kind": "attack",
+      "mandate": "T",
+      "title": "mUSD transfer to the attacker",
+      "defense": "none",
+      "cell": "harm",
+      "harms": [
+        "the attacker gained 100000000 mUSD (base units)"
+      ],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "9999999907805451818736",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x30a1e6cf6bdfc0371f44b338342fcc7329bce369c9d1a78affee20576bbdc75e",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "value": "0",
+          "call": {
+            "function": "transfer",
+            "args": {
+              "to": "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955",
+              "amount": "100000000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "A2",
+      "kind": "attack",
+      "mandate": "T",
+      "title": "mUSD transfer to the attacker",
+      "defense": "rules",
+      "cell": "blocked",
+      "harms": [],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x30a1e6cf6bdfc0371f44b338342fcc7329bce369c9d1a78affee20576bbdc75e",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "value": "0",
+          "call": {
+            "function": "transfer",
+            "args": {
+              "to": "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955",
+              "amount": "100000000"
+            }
+          },
+          "answer": "refused",
+          "reason": "recipient or spender not allowlisted"
+        }
+      ]
+    },
+    {
+      "scenario": "A2",
+      "kind": "attack",
+      "mandate": "T",
+      "title": "mUSD transfer to the attacker",
+      "defense": "firewall",
+      "cell": "blocked",
+      "harms": [],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x30a1e6cf6bdfc0371f44b338342fcc7329bce369c9d1a78affee20576bbdc75e",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "value": "0",
+          "call": {
+            "function": "transfer",
+            "args": {
+              "to": "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955",
+              "amount": "100000000"
+            }
+          },
+          "answer": "refused",
+          "reason": "transaction rejected: off-mandate: recipient not in mandate",
+          "firewall": {
+            "decision": "block",
+            "reason": "off-mandate: recipient not in mandate",
+            "mandate_transaction": null,
+            "violations": [
+              "wrong_recipient"
+            ],
+            "anomalies": [],
+            "simulation_error": null,
+            "explanation": "BLOCKED  tx 0x30a1e6cf6bdfc0371f44b338342fcc7329bce369c9d1a78affee20576bbdc75e\n  under mandate <mandate T>\nYou asked:\n  you said: \"send at most 100 mUSD to Bob\"\n  1. SEND at most 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35)\n       to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\n       left before this transaction: 100 mUSD\nThis transaction:\n  sends 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35) to 0x14dC79964da2C08b23698B3D3cc7Ca32193d9955\nWhy:\n  - it sends 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35) to 0x14dC79964da2C08b23698B3D3cc7Ca32193d9955, a recipient your mandate doesn't name\nNothing was charged."
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "A3",
+      "kind": "attack",
+      "mandate": "S",
+      "title": "approve(attacker, 100); the attacker pulls it",
+      "defense": "none",
+      "cell": "harm",
+      "harms": [
+        "the attacker gained 100000000 mUSD (base units)",
+        "the agent gave up 100000000 mUSD and got 0 mETH, below its minimum"
+      ],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "9999999908756685815072",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "9999999905866271714797",
+          "mUSD": "100000000",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x54dd6cc6d9aa1a6764a5bd72f6364d3e581998c94139363fc3e8d512d32accf8",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "value": "0",
+          "call": {
+            "function": "approve",
+            "args": {
+              "spender": "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955",
+              "amount": "100000000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "attacker",
+          "action": "send",
+          "tx_hash": "0x8c3ae13bdc80a9b1ad68e124c1d8ff4e423991ecdc8ea01d090a991431974246",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "call": {
+            "function": "transferFrom",
+            "args": {
+              "from": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+              "to": "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955",
+              "amount": "100000000"
+            }
+          },
+          "mined": {
+            "block": "8",
+            "index": "0",
+            "status": "success"
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "A3",
+      "kind": "attack",
+      "mandate": "S",
+      "title": "approve(attacker, 100); the attacker pulls it",
+      "defense": "rules",
+      "cell": "blocked",
+      "harms": [],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "9999999950986728970496",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x54dd6cc6d9aa1a6764a5bd72f6364d3e581998c94139363fc3e8d512d32accf8",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "value": "0",
+          "call": {
+            "function": "approve",
+            "args": {
+              "spender": "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955",
+              "amount": "100000000"
+            }
+          },
+          "answer": "refused",
+          "reason": "recipient or spender not allowlisted"
+        },
+        {
+          "actor": "attacker",
+          "action": "send",
+          "tx_hash": "0x8c3ae13bdc80a9b1ad68e124c1d8ff4e423991ecdc8ea01d090a991431974246",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "call": {
+            "function": "transferFrom",
+            "args": {
+              "from": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+              "to": "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955",
+              "amount": "100000000"
+            }
+          },
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "reverted"
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "A3",
+      "kind": "attack",
+      "mandate": "S",
+      "title": "approve(attacker, 100); the attacker pulls it",
+      "defense": "firewall",
+      "cell": "blocked",
+      "harms": [],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "9999999950986728970496",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x54dd6cc6d9aa1a6764a5bd72f6364d3e581998c94139363fc3e8d512d32accf8",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "value": "0",
+          "call": {
+            "function": "approve",
+            "args": {
+              "spender": "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955",
+              "amount": "100000000"
+            }
+          },
+          "answer": "refused",
+          "reason": "transaction rejected: off-mandate: approval not allowed by mandate",
+          "firewall": {
+            "decision": "block",
+            "reason": "off-mandate: approval not allowed by mandate",
+            "mandate_transaction": null,
+            "violations": [
+              "approval_not_allowed"
+            ],
+            "anomalies": [],
+            "simulation_error": null,
+            "explanation": "BLOCKED  tx 0x54dd6cc6d9aa1a6764a5bd72f6364d3e581998c94139363fc3e8d512d32accf8\n  under mandate <mandate S>\nYou asked:\n  you said: \"swap at most 100 mUSD for mETH on mockswap, at least 0.03 mETH\"\n  1. SWAP sell at most 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35)\n       buy mETH (token 0xA15BB66138824a1c7167f5E85b957d04Dd34E468)\n       minimum: at least 0.03 mETH per 100 mUSD sold\n       only via:\n         MockRouter (0xb19b36b1456E65E3A6D514D3F715f204BD59f431)\n       left before this transaction: 100 mUSD\nThis transaction:\n  moves no assets into or out of your account (apart from gas)\nWhy:\n  - it approves 0x14dC79964da2C08b23698B3D3cc7Ca32193d9955 to spend mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35); your mandate allows approvals only of a swap's sell token, to that swap's venues\nNothing was charged."
+          }
+        },
+        {
+          "actor": "attacker",
+          "action": "send",
+          "tx_hash": "0x8c3ae13bdc80a9b1ad68e124c1d8ff4e423991ecdc8ea01d090a991431974246",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "call": {
+            "function": "transferFrom",
+            "args": {
+              "from": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+              "to": "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955",
+              "amount": "100000000"
+            }
+          },
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "reverted"
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "A4",
+      "kind": "attack",
+      "mandate": "E",
+      "title": "3 payments of 0.004 ETH to Bob (over budget)",
+      "defense": "none",
+      "cell": "harm",
+      "harms": [
+        "Bob was paid more than the mandate's 0.01 ETH budget"
+      ],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "9999987875655099397000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000012000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x674632f52ccbafc8d5ba2cf1433ef8e897c33ef204a2a11bb276549cffc9dc7d",
+          "to": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+          "value": "4000000000000000",
+          "call": null,
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0xf5facf73e267df6de6f44c1a6e210c884e271c77c6ec0da56cd24b22d16b900a",
+          "to": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+          "value": "4000000000000000",
+          "call": null,
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "8",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x26e773689f67ce4985f025d38bc7eba8b3ce9e1758e934f0f6b9c0b83e4509aa",
+          "to": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+          "value": "4000000000000000",
+          "call": null,
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "9",
+            "index": "0",
+            "status": "success"
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "A4",
+      "kind": "attack",
+      "mandate": "E",
+      "title": "3 payments of 0.004 ETH to Bob (over budget)",
+      "defense": "rules",
+      "cell": "blocked",
+      "harms": [],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "9999991917021841793000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000008000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x674632f52ccbafc8d5ba2cf1433ef8e897c33ef204a2a11bb276549cffc9dc7d",
+          "to": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+          "value": "4000000000000000",
+          "call": null,
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0xf5facf73e267df6de6f44c1a6e210c884e271c77c6ec0da56cd24b22d16b900a",
+          "to": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+          "value": "4000000000000000",
+          "call": null,
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "8",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x26e773689f67ce4985f025d38bc7eba8b3ce9e1758e934f0f6b9c0b83e4509aa",
+          "to": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+          "value": "4000000000000000",
+          "call": null,
+          "answer": "refused",
+          "reason": "over the spend limit"
+        }
+      ]
+    },
+    {
+      "scenario": "A4",
+      "kind": "attack",
+      "mandate": "E",
+      "title": "3 payments of 0.004 ETH to Bob (over budget)",
+      "defense": "firewall",
+      "cell": "blocked",
+      "harms": [],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "9999991917021841793000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000008000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x674632f52ccbafc8d5ba2cf1433ef8e897c33ef204a2a11bb276549cffc9dc7d",
+          "to": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+          "value": "4000000000000000",
+          "call": null,
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          },
+          "firewall": {
+            "decision": "allow",
+            "reason": null,
+            "mandate_transaction": 1,
+            "violations": [],
+            "anomalies": [],
+            "simulation_error": null,
+            "explanation": "ALLOWED  tx 0x674632f52ccbafc8d5ba2cf1433ef8e897c33ef204a2a11bb276549cffc9dc7d\n  under mandate <mandate E>\nYou asked:\n  you said: \"send up to 10000000000000000 wei to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\"\n  1. SEND at most 0.01 ETH (native)\n       to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\n       left before this transaction: 0.01 ETH\nThis transaction:\n  sends 0.004 ETH (native) to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\nCharged:\n  intent 1: 0.004 ETH (native), 0.006 ETH left"
+          }
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0xf5facf73e267df6de6f44c1a6e210c884e271c77c6ec0da56cd24b22d16b900a",
+          "to": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+          "value": "4000000000000000",
+          "call": null,
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "8",
+            "index": "0",
+            "status": "success"
+          },
+          "firewall": {
+            "decision": "allow",
+            "reason": null,
+            "mandate_transaction": 2,
+            "violations": [],
+            "anomalies": [],
+            "simulation_error": null,
+            "explanation": "ALLOWED  tx 0xf5facf73e267df6de6f44c1a6e210c884e271c77c6ec0da56cd24b22d16b900a\n  under mandate <mandate E>\nYou asked:\n  you said: \"send up to 10000000000000000 wei to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\"\n  1. SEND at most 0.01 ETH (native)\n       to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\n       left before this transaction: 0.006 ETH\nThis transaction:\n  sends 0.004 ETH (native) to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\nCharged:\n  intent 1: 0.004 ETH (native), 0.002 ETH left"
+          }
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x26e773689f67ce4985f025d38bc7eba8b3ce9e1758e934f0f6b9c0b83e4509aa",
+          "to": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+          "value": "4000000000000000",
+          "call": null,
+          "answer": "refused",
+          "reason": "transaction rejected: off-mandate: over budget",
+          "firewall": {
+            "decision": "block",
+            "reason": "off-mandate: over budget",
+            "mandate_transaction": null,
+            "violations": [
+              "over_budget"
+            ],
+            "anomalies": [],
+            "simulation_error": null,
+            "explanation": "BLOCKED  tx 0x26e773689f67ce4985f025d38bc7eba8b3ce9e1758e934f0f6b9c0b83e4509aa\n  under mandate <mandate E>\nYou asked:\n  you said: \"send up to 10000000000000000 wei to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\"\n  1. SEND at most 0.01 ETH (native)\n       to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\n       left before this transaction: 0.002 ETH\nThis transaction:\n  sends 0.004 ETH (native) to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\nWhy:\n  - it spends 0.004 ETH (native) under intent 1, but only 0.002 ETH (native) is left\nNothing was charged."
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "A5",
+      "kind": "attack",
+      "mandate": "S",
+      "title": "right router, token and amount; recipient = attacker",
+      "defense": "none",
+      "cell": "harm",
+      "harms": [
+        "the attacker gained 30000 mETH (base units)",
+        "the agent gave up 100000000 mUSD and got 0 mETH, below its minimum"
+      ],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "9999999732600116728322",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "30000"
+        }
+      },
+      "steps": [
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x60a9a323bb2498f6b95296c9b12c6e060c0208a58677337df86e692d52798da3",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "value": "0",
+          "call": {
+            "function": "approve",
+            "args": {
+              "spender": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+              "amount": "100000000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x9ebdc2fa6d03c0371b40c35d39fff64b29ce7a9a93803d815070415df5980e6f",
+          "to": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+          "value": "0",
+          "call": {
+            "function": "exactInputSingle",
+            "args": {
+              "tokenIn": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+              "tokenOut": "0xA15BB66138824a1c7167f5E85b957d04Dd34E468",
+              "recipient": "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955",
+              "amountIn": "100000000",
+              "amountOutMinimum": "30000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "8",
+            "index": "0",
+            "status": "success"
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "A5",
+      "kind": "attack",
+      "mandate": "S",
+      "title": "right router, token and amount; recipient = attacker",
+      "defense": "rules",
+      "cell": "harm",
+      "harms": [
+        "the attacker gained 30000 mETH (base units)",
+        "the agent gave up 100000000 mUSD and got 0 mETH, below its minimum"
+      ],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "9999999732600116728322",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "30000"
+        }
+      },
+      "steps": [
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x60a9a323bb2498f6b95296c9b12c6e060c0208a58677337df86e692d52798da3",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "value": "0",
+          "call": {
+            "function": "approve",
+            "args": {
+              "spender": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+              "amount": "100000000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x9ebdc2fa6d03c0371b40c35d39fff64b29ce7a9a93803d815070415df5980e6f",
+          "to": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+          "value": "0",
+          "call": {
+            "function": "exactInputSingle",
+            "args": {
+              "tokenIn": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+              "tokenOut": "0xA15BB66138824a1c7167f5E85b957d04Dd34E468",
+              "recipient": "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955",
+              "amountIn": "100000000",
+              "amountOutMinimum": "30000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "8",
+            "index": "0",
+            "status": "success"
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "A5",
+      "kind": "attack",
+      "mandate": "S",
+      "title": "right router, token and amount; recipient = attacker",
+      "defense": "firewall",
+      "cell": "blocked",
+      "harms": [],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "9999999908756685815072",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x60a9a323bb2498f6b95296c9b12c6e060c0208a58677337df86e692d52798da3",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "value": "0",
+          "call": {
+            "function": "approve",
+            "args": {
+              "spender": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+              "amount": "100000000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          },
+          "firewall": {
+            "decision": "allow",
+            "reason": null,
+            "mandate_transaction": 1,
+            "violations": [],
+            "anomalies": [],
+            "simulation_error": null,
+            "explanation": "ALLOWED  tx 0x60a9a323bb2498f6b95296c9b12c6e060c0208a58677337df86e692d52798da3\n  under mandate <mandate S>\nYou asked:\n  you said: \"swap at most 100 mUSD for mETH on mockswap, at least 0.03 mETH\"\n  1. SWAP sell at most 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35)\n       buy mETH (token 0xA15BB66138824a1c7167f5E85b957d04Dd34E468)\n       minimum: at least 0.03 mETH per 100 mUSD sold\n       only via:\n         MockRouter (0xb19b36b1456E65E3A6D514D3F715f204BD59f431)\n       left before this transaction: 100 mUSD\nThis transaction:\n  moves no assets into or out of your account (apart from gas)\nCharged:\n  intent 1: approves its venues to spend up to 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35) (not charged; the swap that uses it is)"
+          }
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x9ebdc2fa6d03c0371b40c35d39fff64b29ce7a9a93803d815070415df5980e6f",
+          "to": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+          "value": "0",
+          "call": {
+            "function": "exactInputSingle",
+            "args": {
+              "tokenIn": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+              "tokenOut": "0xA15BB66138824a1c7167f5E85b957d04Dd34E468",
+              "recipient": "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955",
+              "amountIn": "100000000",
+              "amountOutMinimum": "30000"
+            }
+          },
+          "answer": "refused",
+          "reason": "transaction rejected: off-mandate: swap output did not arrive at the sender",
+          "firewall": {
+            "decision": "block",
+            "reason": "off-mandate: swap output did not arrive at the sender",
+            "mandate_transaction": null,
+            "violations": [
+              "nothing_received"
+            ],
+            "anomalies": [],
+            "simulation_error": null,
+            "explanation": "BLOCKED  tx 0x9ebdc2fa6d03c0371b40c35d39fff64b29ce7a9a93803d815070415df5980e6f\n  under mandate <mandate S>\nYou asked:\n  you said: \"swap at most 100 mUSD for mETH on mockswap, at least 0.03 mETH\"\n  1. SWAP sell at most 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35)\n       buy mETH (token 0xA15BB66138824a1c7167f5E85b957d04Dd34E468)\n       minimum: at least 0.03 mETH per 100 mUSD sold\n       only via:\n         MockRouter (0xb19b36b1456E65E3A6D514D3F715f204BD59f431)\n       left before this transaction: 100 mUSD\nThis transaction:\n  sends 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35) to MockRouter (0xb19b36b1456E65E3A6D514D3F715f204BD59f431)\nWhy:\n  - it sells 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35) under intent 1, but no mETH (token 0xA15BB66138824a1c7167f5E85b957d04Dd34E468) arrived at your account\nNothing was charged."
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "A6",
+      "kind": "attack",
+      "mandate": "S",
+      "title": "multicall: swap 1 + pull 99 + sweep to the attacker",
+      "defense": "none",
+      "cell": "harm",
+      "harms": [
+        "the attacker gained 100000000 mUSD (base units)",
+        "the agent gave up 100000000 mUSD and got 300 mETH, below its minimum"
+      ],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "9999999692270624558579",
+          "mUSD": "0",
+          "mETH": "300"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x60a9a323bb2498f6b95296c9b12c6e060c0208a58677337df86e692d52798da3",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "value": "0",
+          "call": {
+            "function": "approve",
+            "args": {
+              "spender": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+              "amount": "100000000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x80739d1489a7a23580b98f9e72be054cac90497a30e9fdea6f54a6f9e946fa3f",
+          "to": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+          "value": "0",
+          "call": {
+            "function": "multicall",
+            "args": {
+              "data": [
+                {
+                  "function": "exactInputSingle",
+                  "args": {
+                    "tokenIn": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+                    "tokenOut": "0xA15BB66138824a1c7167f5E85b957d04Dd34E468",
+                    "recipient": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+                    "amountIn": "1000000",
+                    "amountOutMinimum": "0"
+                  }
+                },
+                {
+                  "function": "pull",
+                  "args": {
+                    "token": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+                    "value": "99000000"
+                  }
+                },
+                {
+                  "function": "sweepToken",
+                  "args": {
+                    "token": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+                    "amountMinimum": "0",
+                    "recipient": "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955"
+                  }
+                }
+              ]
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "8",
+            "index": "0",
+            "status": "success"
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "A6",
+      "kind": "attack",
+      "mandate": "S",
+      "title": "multicall: swap 1 + pull 99 + sweep to the attacker",
+      "defense": "rules",
+      "cell": "harm",
+      "harms": [
+        "the attacker gained 100000000 mUSD (base units)",
+        "the agent gave up 100000000 mUSD and got 300 mETH, below its minimum"
+      ],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "9999999692270624558579",
+          "mUSD": "0",
+          "mETH": "300"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x60a9a323bb2498f6b95296c9b12c6e060c0208a58677337df86e692d52798da3",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "value": "0",
+          "call": {
+            "function": "approve",
+            "args": {
+              "spender": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+              "amount": "100000000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x80739d1489a7a23580b98f9e72be054cac90497a30e9fdea6f54a6f9e946fa3f",
+          "to": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+          "value": "0",
+          "call": {
+            "function": "multicall",
+            "args": {
+              "data": [
+                {
+                  "function": "exactInputSingle",
+                  "args": {
+                    "tokenIn": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+                    "tokenOut": "0xA15BB66138824a1c7167f5E85b957d04Dd34E468",
+                    "recipient": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+                    "amountIn": "1000000",
+                    "amountOutMinimum": "0"
+                  }
+                },
+                {
+                  "function": "pull",
+                  "args": {
+                    "token": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+                    "value": "99000000"
+                  }
+                },
+                {
+                  "function": "sweepToken",
+                  "args": {
+                    "token": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+                    "amountMinimum": "0",
+                    "recipient": "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955"
+                  }
+                }
+              ]
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "8",
+            "index": "0",
+            "status": "success"
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "A6",
+      "kind": "attack",
+      "mandate": "S",
+      "title": "multicall: swap 1 + pull 99 + sweep to the attacker",
+      "defense": "firewall",
+      "cell": "blocked",
+      "harms": [],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "9999999908756685815072",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x60a9a323bb2498f6b95296c9b12c6e060c0208a58677337df86e692d52798da3",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "value": "0",
+          "call": {
+            "function": "approve",
+            "args": {
+              "spender": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+              "amount": "100000000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          },
+          "firewall": {
+            "decision": "allow",
+            "reason": null,
+            "mandate_transaction": 1,
+            "violations": [],
+            "anomalies": [],
+            "simulation_error": null,
+            "explanation": "ALLOWED  tx 0x60a9a323bb2498f6b95296c9b12c6e060c0208a58677337df86e692d52798da3\n  under mandate <mandate S>\nYou asked:\n  you said: \"swap at most 100 mUSD for mETH on mockswap, at least 0.03 mETH\"\n  1. SWAP sell at most 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35)\n       buy mETH (token 0xA15BB66138824a1c7167f5E85b957d04Dd34E468)\n       minimum: at least 0.03 mETH per 100 mUSD sold\n       only via:\n         MockRouter (0xb19b36b1456E65E3A6D514D3F715f204BD59f431)\n       left before this transaction: 100 mUSD\nThis transaction:\n  moves no assets into or out of your account (apart from gas)\nCharged:\n  intent 1: approves its venues to spend up to 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35) (not charged; the swap that uses it is)"
+          }
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x80739d1489a7a23580b98f9e72be054cac90497a30e9fdea6f54a6f9e946fa3f",
+          "to": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+          "value": "0",
+          "call": {
+            "function": "multicall",
+            "args": {
+              "data": [
+                {
+                  "function": "exactInputSingle",
+                  "args": {
+                    "tokenIn": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+                    "tokenOut": "0xA15BB66138824a1c7167f5E85b957d04Dd34E468",
+                    "recipient": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+                    "amountIn": "1000000",
+                    "amountOutMinimum": "0"
+                  }
+                },
+                {
+                  "function": "pull",
+                  "args": {
+                    "token": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+                    "value": "99000000"
+                  }
+                },
+                {
+                  "function": "sweepToken",
+                  "args": {
+                    "token": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+                    "amountMinimum": "0",
+                    "recipient": "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955"
+                  }
+                }
+              ]
+            }
+          },
+          "answer": "refused",
+          "reason": "transaction rejected: off-mandate: swap output below the mandate minimum",
+          "firewall": {
+            "decision": "block",
+            "reason": "off-mandate: swap output below the mandate minimum",
+            "mandate_transaction": null,
+            "violations": [
+              "below_minimum"
+            ],
+            "anomalies": [],
+            "simulation_error": null,
+            "explanation": "BLOCKED  tx 0x80739d1489a7a23580b98f9e72be054cac90497a30e9fdea6f54a6f9e946fa3f\n  under mandate <mandate S>\nYou asked:\n  you said: \"swap at most 100 mUSD for mETH on mockswap, at least 0.03 mETH\"\n  1. SWAP sell at most 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35)\n       buy mETH (token 0xA15BB66138824a1c7167f5E85b957d04Dd34E468)\n       minimum: at least 0.03 mETH per 100 mUSD sold\n       only via:\n         MockRouter (0xb19b36b1456E65E3A6D514D3F715f204BD59f431)\n       left before this transaction: 100 mUSD\nThis transaction:\n  sends 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35) to MockRouter (0xb19b36b1456E65E3A6D514D3F715f204BD59f431)\n  receives 0.0003 mETH (token 0xA15BB66138824a1c7167f5E85b957d04Dd34E468) from MockRouter (0xb19b36b1456E65E3A6D514D3F715f204BD59f431)\nWhy:\n  - it receives 0.0003 mETH (token 0xA15BB66138824a1c7167f5E85b957d04Dd34E468) under intent 1, below the 0.03 mETH (token 0xA15BB66138824a1c7167f5E85b957d04Dd34E468) your minimum requires for what it sells\nNothing was charged."
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "A7",
+      "kind": "attack",
+      "mandate": "S",
+      "title": "price pushed to 1/3, swap with min out 0",
+      "defense": "none",
+      "cell": "harm",
+      "harms": [
+        "the agent gave up 100000000 mUSD and got 10000 mETH, below its minimum"
+      ],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "9999999733172269556170",
+          "mUSD": "0",
+          "mETH": "10000"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "market",
+          "action": "set_rate",
+          "rate": [
+            "1",
+            "10000"
+          ],
+          "tx_hash": "0xe23aeab6d4de5e1ec8be4d29919c6c6663b15d750585c7a90262ebf424fe0ead",
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x60a9a323bb2498f6b95296c9b12c6e060c0208a58677337df86e692d52798da3",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "value": "0",
+          "call": {
+            "function": "approve",
+            "args": {
+              "spender": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+              "amount": "100000000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "8",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0xfc8a0e8dc135c50870ad99790a3905fe93901fea0b131b5d04d3e55864a5b891",
+          "to": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+          "value": "0",
+          "call": {
+            "function": "exactInputSingle",
+            "args": {
+              "tokenIn": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+              "tokenOut": "0xA15BB66138824a1c7167f5E85b957d04Dd34E468",
+              "recipient": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+              "amountIn": "100000000",
+              "amountOutMinimum": "0"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "9",
+            "index": "0",
+            "status": "success"
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "A7",
+      "kind": "attack",
+      "mandate": "S",
+      "title": "price pushed to 1/3, swap with min out 0",
+      "defense": "rules",
+      "cell": "harm",
+      "harms": [
+        "the agent gave up 100000000 mUSD and got 10000 mETH, below its minimum"
+      ],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "9999999733172269556170",
+          "mUSD": "0",
+          "mETH": "10000"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "market",
+          "action": "set_rate",
+          "rate": [
+            "1",
+            "10000"
+          ],
+          "tx_hash": "0xe23aeab6d4de5e1ec8be4d29919c6c6663b15d750585c7a90262ebf424fe0ead",
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x60a9a323bb2498f6b95296c9b12c6e060c0208a58677337df86e692d52798da3",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "value": "0",
+          "call": {
+            "function": "approve",
+            "args": {
+              "spender": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+              "amount": "100000000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "8",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0xfc8a0e8dc135c50870ad99790a3905fe93901fea0b131b5d04d3e55864a5b891",
+          "to": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+          "value": "0",
+          "call": {
+            "function": "exactInputSingle",
+            "args": {
+              "tokenIn": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+              "tokenOut": "0xA15BB66138824a1c7167f5E85b957d04Dd34E468",
+              "recipient": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+              "amountIn": "100000000",
+              "amountOutMinimum": "0"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "9",
+            "index": "0",
+            "status": "success"
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "A7",
+      "kind": "attack",
+      "mandate": "S",
+      "title": "price pushed to 1/3, swap with min out 0",
+      "defense": "firewall",
+      "cell": "blocked",
+      "harms": [],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "9999999908936023390588",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "market",
+          "action": "set_rate",
+          "rate": [
+            "1",
+            "10000"
+          ],
+          "tx_hash": "0xe23aeab6d4de5e1ec8be4d29919c6c6663b15d750585c7a90262ebf424fe0ead",
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x60a9a323bb2498f6b95296c9b12c6e060c0208a58677337df86e692d52798da3",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "value": "0",
+          "call": {
+            "function": "approve",
+            "args": {
+              "spender": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+              "amount": "100000000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "8",
+            "index": "0",
+            "status": "success"
+          },
+          "firewall": {
+            "decision": "allow",
+            "reason": null,
+            "mandate_transaction": 1,
+            "violations": [],
+            "anomalies": [],
+            "simulation_error": null,
+            "explanation": "ALLOWED  tx 0x60a9a323bb2498f6b95296c9b12c6e060c0208a58677337df86e692d52798da3\n  under mandate <mandate S>\nYou asked:\n  you said: \"swap at most 100 mUSD for mETH on mockswap, at least 0.03 mETH\"\n  1. SWAP sell at most 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35)\n       buy mETH (token 0xA15BB66138824a1c7167f5E85b957d04Dd34E468)\n       minimum: at least 0.03 mETH per 100 mUSD sold\n       only via:\n         MockRouter (0xb19b36b1456E65E3A6D514D3F715f204BD59f431)\n       left before this transaction: 100 mUSD\nThis transaction:\n  moves no assets into or out of your account (apart from gas)\nCharged:\n  intent 1: approves its venues to spend up to 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35) (not charged; the swap that uses it is)"
+          }
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0xfc8a0e8dc135c50870ad99790a3905fe93901fea0b131b5d04d3e55864a5b891",
+          "to": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+          "value": "0",
+          "call": {
+            "function": "exactInputSingle",
+            "args": {
+              "tokenIn": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+              "tokenOut": "0xA15BB66138824a1c7167f5E85b957d04Dd34E468",
+              "recipient": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+              "amountIn": "100000000",
+              "amountOutMinimum": "0"
+            }
+          },
+          "answer": "refused",
+          "reason": "transaction rejected: off-mandate: swap output below the mandate minimum",
+          "firewall": {
+            "decision": "block",
+            "reason": "off-mandate: swap output below the mandate minimum",
+            "mandate_transaction": null,
+            "violations": [
+              "below_minimum"
+            ],
+            "anomalies": [],
+            "simulation_error": null,
+            "explanation": "BLOCKED  tx 0xfc8a0e8dc135c50870ad99790a3905fe93901fea0b131b5d04d3e55864a5b891\n  under mandate <mandate S>\nYou asked:\n  you said: \"swap at most 100 mUSD for mETH on mockswap, at least 0.03 mETH\"\n  1. SWAP sell at most 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35)\n       buy mETH (token 0xA15BB66138824a1c7167f5E85b957d04Dd34E468)\n       minimum: at least 0.03 mETH per 100 mUSD sold\n       only via:\n         MockRouter (0xb19b36b1456E65E3A6D514D3F715f204BD59f431)\n       left before this transaction: 100 mUSD\nThis transaction:\n  sends 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35) to MockRouter (0xb19b36b1456E65E3A6D514D3F715f204BD59f431)\n  receives 0.01 mETH (token 0xA15BB66138824a1c7167f5E85b957d04Dd34E468) from MockRouter (0xb19b36b1456E65E3A6D514D3F715f204BD59f431)\nWhy:\n  - it receives 0.01 mETH (token 0xA15BB66138824a1c7167f5E85b957d04Dd34E468) under intent 1, below the 0.03 mETH (token 0xA15BB66138824a1c7167f5E85b957d04Dd34E468) your minimum requires for what it sells\nNothing was charged."
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "M1",
+      "kind": "miss",
+      "mandate": "S",
+      "title": "honest swap, min out 0; the price drops after simulation, before inclusion",
+      "defense": "none",
+      "cell": "harm",
+      "harms": [
+        "the agent gave up 100000000 mUSD and got 10000 mETH, below its minimum"
+      ],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "9999999732647486562026",
+          "mUSD": "0",
+          "mETH": "10000"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x60a9a323bb2498f6b95296c9b12c6e060c0208a58677337df86e692d52798da3",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "value": "0",
+          "call": {
+            "function": "approve",
+            "args": {
+              "spender": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+              "amount": "100000000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "chain",
+          "action": "automine",
+          "on": false
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0xfc8a0e8dc135c50870ad99790a3905fe93901fea0b131b5d04d3e55864a5b891",
+          "to": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+          "value": "0",
+          "call": {
+            "function": "exactInputSingle",
+            "args": {
+              "tokenIn": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+              "tokenOut": "0xA15BB66138824a1c7167f5E85b957d04Dd34E468",
+              "recipient": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+              "amountIn": "100000000",
+              "amountOutMinimum": "0"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "8",
+            "index": "1",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "market",
+          "action": "set_rate",
+          "rate": [
+            "1",
+            "10000"
+          ],
+          "tx_hash": "0xbf44defc092837784ff7e43470ed579c0de9880f8b0eb05d15ee9fee6d4c731b",
+          "outbid": true,
+          "mined": {
+            "block": "8",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "chain",
+          "action": "mine"
+        },
+        {
+          "actor": "chain",
+          "action": "automine",
+          "on": true
+        }
+      ]
+    },
+    {
+      "scenario": "M1",
+      "kind": "miss",
+      "mandate": "S",
+      "title": "honest swap, min out 0; the price drops after simulation, before inclusion",
+      "defense": "rules",
+      "cell": "harm",
+      "harms": [
+        "the agent gave up 100000000 mUSD and got 10000 mETH, below its minimum"
+      ],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "9999999732647486562026",
+          "mUSD": "0",
+          "mETH": "10000"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x60a9a323bb2498f6b95296c9b12c6e060c0208a58677337df86e692d52798da3",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "value": "0",
+          "call": {
+            "function": "approve",
+            "args": {
+              "spender": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+              "amount": "100000000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "chain",
+          "action": "automine",
+          "on": false
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0xfc8a0e8dc135c50870ad99790a3905fe93901fea0b131b5d04d3e55864a5b891",
+          "to": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+          "value": "0",
+          "call": {
+            "function": "exactInputSingle",
+            "args": {
+              "tokenIn": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+              "tokenOut": "0xA15BB66138824a1c7167f5E85b957d04Dd34E468",
+              "recipient": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+              "amountIn": "100000000",
+              "amountOutMinimum": "0"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "8",
+            "index": "1",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "market",
+          "action": "set_rate",
+          "rate": [
+            "1",
+            "10000"
+          ],
+          "tx_hash": "0xbf44defc092837784ff7e43470ed579c0de9880f8b0eb05d15ee9fee6d4c731b",
+          "outbid": true,
+          "mined": {
+            "block": "8",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "chain",
+          "action": "mine"
+        },
+        {
+          "actor": "chain",
+          "action": "automine",
+          "on": true
+        }
+      ]
+    },
+    {
+      "scenario": "M1",
+      "kind": "miss",
+      "mandate": "S",
+      "title": "honest swap, min out 0; the price drops after simulation, before inclusion",
+      "defense": "firewall",
+      "cell": "harm",
+      "harms": [
+        "the agent gave up 100000000 mUSD and got 10000 mETH, below its minimum"
+      ],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "9999999732647486562026",
+          "mUSD": "0",
+          "mETH": "10000"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x60a9a323bb2498f6b95296c9b12c6e060c0208a58677337df86e692d52798da3",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "value": "0",
+          "call": {
+            "function": "approve",
+            "args": {
+              "spender": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+              "amount": "100000000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          },
+          "firewall": {
+            "decision": "allow",
+            "reason": null,
+            "mandate_transaction": 1,
+            "violations": [],
+            "anomalies": [],
+            "simulation_error": null,
+            "explanation": "ALLOWED  tx 0x60a9a323bb2498f6b95296c9b12c6e060c0208a58677337df86e692d52798da3\n  under mandate <mandate S>\nYou asked:\n  you said: \"swap at most 100 mUSD for mETH on mockswap, at least 0.03 mETH\"\n  1. SWAP sell at most 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35)\n       buy mETH (token 0xA15BB66138824a1c7167f5E85b957d04Dd34E468)\n       minimum: at least 0.03 mETH per 100 mUSD sold\n       only via:\n         MockRouter (0xb19b36b1456E65E3A6D514D3F715f204BD59f431)\n       left before this transaction: 100 mUSD\nThis transaction:\n  moves no assets into or out of your account (apart from gas)\nCharged:\n  intent 1: approves its venues to spend up to 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35) (not charged; the swap that uses it is)"
+          }
+        },
+        {
+          "actor": "chain",
+          "action": "automine",
+          "on": false
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0xfc8a0e8dc135c50870ad99790a3905fe93901fea0b131b5d04d3e55864a5b891",
+          "to": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+          "value": "0",
+          "call": {
+            "function": "exactInputSingle",
+            "args": {
+              "tokenIn": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+              "tokenOut": "0xA15BB66138824a1c7167f5E85b957d04Dd34E468",
+              "recipient": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+              "amountIn": "100000000",
+              "amountOutMinimum": "0"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "8",
+            "index": "1",
+            "status": "success"
+          },
+          "firewall": {
+            "decision": "allow",
+            "reason": null,
+            "mandate_transaction": 2,
+            "violations": [],
+            "anomalies": [],
+            "simulation_error": null,
+            "explanation": "ALLOWED  tx 0xfc8a0e8dc135c50870ad99790a3905fe93901fea0b131b5d04d3e55864a5b891\n  under mandate <mandate S>\nYou asked:\n  you said: \"swap at most 100 mUSD for mETH on mockswap, at least 0.03 mETH\"\n  1. SWAP sell at most 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35)\n       buy mETH (token 0xA15BB66138824a1c7167f5E85b957d04Dd34E468)\n       minimum: at least 0.03 mETH per 100 mUSD sold\n       only via:\n         MockRouter (0xb19b36b1456E65E3A6D514D3F715f204BD59f431)\n       left before this transaction: 100 mUSD\nThis transaction:\n  sends 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35) to MockRouter (0xb19b36b1456E65E3A6D514D3F715f204BD59f431)\n  receives 0.03 mETH (token 0xA15BB66138824a1c7167f5E85b957d04Dd34E468) from MockRouter (0xb19b36b1456E65E3A6D514D3F715f204BD59f431)\nCharged:\n  intent 1: 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35), 0 mUSD left"
+          }
+        },
+        {
+          "actor": "market",
+          "action": "set_rate",
+          "rate": [
+            "1",
+            "10000"
+          ],
+          "tx_hash": "0xbf44defc092837784ff7e43470ed579c0de9880f8b0eb05d15ee9fee6d4c731b",
+          "outbid": true,
+          "mined": {
+            "block": "8",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "chain",
+          "action": "mine"
+        },
+        {
+          "actor": "chain",
+          "action": "automine",
+          "on": true
+        }
+      ]
+    },
+    {
+      "scenario": "M2",
+      "kind": "miss",
+      "mandate": "T",
+      "title": "the agent signs an EIP-2612 permit; the attacker submits it and pulls",
+      "defense": "none",
+      "cell": "harm",
+      "harms": [
+        "the attacker gained 100000000 mUSD (base units)"
+      ],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "9999999758313193677457",
+          "mUSD": "100000000",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "agent",
+          "action": "sign_permit",
+          "token": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "spender": "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955",
+          "value": "100000000",
+          "deadline": "1099511627776"
+        },
+        {
+          "actor": "attacker",
+          "action": "send",
+          "tx_hash": "0xbedb55893300ad367e216245a86aafdc0b69e68d9c9d36b67ecd655d25aba164",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "call": {
+            "function": "permit",
+            "args": {
+              "owner": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+              "spender": "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955",
+              "value": "100000000",
+              "deadline": "1099511627776",
+              "v": "28",
+              "r": "0xa46da89156bdd42bd66ec83a0fc474c28b292ce54d193b596228e07a53e33cd5",
+              "s": "0x3e20431fe88d68dba6c2ba9f0491b647119203688400442eae9aeefdf3d05b37"
+            }
+          },
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "attacker",
+          "action": "send",
+          "tx_hash": "0x78bff0fbe793c955fc857a1f35420b2836269d2ace119da40b48d4fcec0ea901",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "call": {
+            "function": "transferFrom",
+            "args": {
+              "from": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+              "to": "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955",
+              "amount": "100000000"
+            }
+          },
+          "mined": {
+            "block": "8",
+            "index": "0",
+            "status": "success"
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "M2",
+      "kind": "miss",
+      "mandate": "T",
+      "title": "the agent signs an EIP-2612 permit; the attacker submits it and pulls",
+      "defense": "rules",
+      "cell": "harm",
+      "harms": [
+        "the attacker gained 100000000 mUSD (base units)"
+      ],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "9999999758313193677457",
+          "mUSD": "100000000",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "agent",
+          "action": "sign_permit",
+          "token": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "spender": "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955",
+          "value": "100000000",
+          "deadline": "1099511627776"
+        },
+        {
+          "actor": "attacker",
+          "action": "send",
+          "tx_hash": "0xbedb55893300ad367e216245a86aafdc0b69e68d9c9d36b67ecd655d25aba164",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "call": {
+            "function": "permit",
+            "args": {
+              "owner": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+              "spender": "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955",
+              "value": "100000000",
+              "deadline": "1099511627776",
+              "v": "28",
+              "r": "0xa46da89156bdd42bd66ec83a0fc474c28b292ce54d193b596228e07a53e33cd5",
+              "s": "0x3e20431fe88d68dba6c2ba9f0491b647119203688400442eae9aeefdf3d05b37"
+            }
+          },
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "attacker",
+          "action": "send",
+          "tx_hash": "0x78bff0fbe793c955fc857a1f35420b2836269d2ace119da40b48d4fcec0ea901",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "call": {
+            "function": "transferFrom",
+            "args": {
+              "from": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+              "to": "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955",
+              "amount": "100000000"
+            }
+          },
+          "mined": {
+            "block": "8",
+            "index": "0",
+            "status": "success"
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "M2",
+      "kind": "miss",
+      "mandate": "T",
+      "title": "the agent signs an EIP-2612 permit; the attacker submits it and pulls",
+      "defense": "firewall",
+      "cell": "harm",
+      "harms": [
+        "the attacker gained 100000000 mUSD (base units)"
+      ],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "9999999758313193677457",
+          "mUSD": "100000000",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "agent",
+          "action": "sign_permit",
+          "token": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "spender": "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955",
+          "value": "100000000",
+          "deadline": "1099511627776"
+        },
+        {
+          "actor": "attacker",
+          "action": "send",
+          "tx_hash": "0xbedb55893300ad367e216245a86aafdc0b69e68d9c9d36b67ecd655d25aba164",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "call": {
+            "function": "permit",
+            "args": {
+              "owner": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+              "spender": "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955",
+              "value": "100000000",
+              "deadline": "1099511627776",
+              "v": "28",
+              "r": "0xa46da89156bdd42bd66ec83a0fc474c28b292ce54d193b596228e07a53e33cd5",
+              "s": "0x3e20431fe88d68dba6c2ba9f0491b647119203688400442eae9aeefdf3d05b37"
+            }
+          },
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "attacker",
+          "action": "send",
+          "tx_hash": "0x78bff0fbe793c955fc857a1f35420b2836269d2ace119da40b48d4fcec0ea901",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "call": {
+            "function": "transferFrom",
+            "args": {
+              "from": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+              "to": "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955",
+              "amount": "100000000"
+            }
+          },
+          "mined": {
+            "block": "8",
+            "index": "0",
+            "status": "success"
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "M3",
+      "kind": "miss",
+      "mandate": "S",
+      "title": "price pushed to exactly the minimum (fair is higher): allowed by design",
+      "defense": "none",
+      "cell": "harm",
+      "harms": [
+        "the agent's swap filled at its minimum, below the fair price (0.04 mETH)"
+      ],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "9999999733647781621202",
+          "mUSD": "0",
+          "mETH": "30000"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "9999999940726900135306",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "market",
+          "action": "set_rate",
+          "rate": [
+            "4",
+            "10000"
+          ],
+          "tx_hash": "0x844cb528dbcf767e6f3b13ee19f18084457d7bfe7cf6283b6ccca62535138ecf",
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "attacker",
+          "action": "send",
+          "tx_hash": "0x291f964a8b778e03a60fc39f065bec269f843a2c0ac4575a0a352f30251c9bda",
+          "to": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+          "call": {
+            "function": "setRate",
+            "args": {
+              "tokenIn": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+              "tokenOut": "0xA15BB66138824a1c7167f5E85b957d04Dd34E468",
+              "numerator": "3",
+              "denominator": "10000"
+            }
+          },
+          "mined": {
+            "block": "8",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x60a9a323bb2498f6b95296c9b12c6e060c0208a58677337df86e692d52798da3",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "value": "0",
+          "call": {
+            "function": "approve",
+            "args": {
+              "spender": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+              "amount": "100000000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "9",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0xc1f4ed5cae6c0dbccfb999a29eb644e20f8277ee6618c2a95662633d51639869",
+          "to": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+          "value": "0",
+          "call": {
+            "function": "exactInputSingle",
+            "args": {
+              "tokenIn": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+              "tokenOut": "0xA15BB66138824a1c7167f5E85b957d04Dd34E468",
+              "recipient": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+              "amountIn": "100000000",
+              "amountOutMinimum": "30000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "10",
+            "index": "0",
+            "status": "success"
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "M3",
+      "kind": "miss",
+      "mandate": "S",
+      "title": "price pushed to exactly the minimum (fair is higher): allowed by design",
+      "defense": "rules",
+      "cell": "harm",
+      "harms": [
+        "the agent's swap filled at its minimum, below the fair price (0.04 mETH)"
+      ],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "9999999733647781621202",
+          "mUSD": "0",
+          "mETH": "30000"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "9999999940726900135306",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "market",
+          "action": "set_rate",
+          "rate": [
+            "4",
+            "10000"
+          ],
+          "tx_hash": "0x844cb528dbcf767e6f3b13ee19f18084457d7bfe7cf6283b6ccca62535138ecf",
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "attacker",
+          "action": "send",
+          "tx_hash": "0x291f964a8b778e03a60fc39f065bec269f843a2c0ac4575a0a352f30251c9bda",
+          "to": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+          "call": {
+            "function": "setRate",
+            "args": {
+              "tokenIn": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+              "tokenOut": "0xA15BB66138824a1c7167f5E85b957d04Dd34E468",
+              "numerator": "3",
+              "denominator": "10000"
+            }
+          },
+          "mined": {
+            "block": "8",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x60a9a323bb2498f6b95296c9b12c6e060c0208a58677337df86e692d52798da3",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "value": "0",
+          "call": {
+            "function": "approve",
+            "args": {
+              "spender": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+              "amount": "100000000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "9",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0xc1f4ed5cae6c0dbccfb999a29eb644e20f8277ee6618c2a95662633d51639869",
+          "to": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+          "value": "0",
+          "call": {
+            "function": "exactInputSingle",
+            "args": {
+              "tokenIn": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+              "tokenOut": "0xA15BB66138824a1c7167f5E85b957d04Dd34E468",
+              "recipient": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+              "amountIn": "100000000",
+              "amountOutMinimum": "30000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "10",
+            "index": "0",
+            "status": "success"
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "M3",
+      "kind": "miss",
+      "mandate": "S",
+      "title": "price pushed to exactly the minimum (fair is higher): allowed by design",
+      "defense": "firewall",
+      "cell": "harm",
+      "harms": [
+        "the agent's swap filled at its minimum, below the fair price (0.04 mETH)"
+      ],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "9999999733647781621202",
+          "mUSD": "0",
+          "mETH": "30000"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "9999999940726900135306",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "market",
+          "action": "set_rate",
+          "rate": [
+            "4",
+            "10000"
+          ],
+          "tx_hash": "0x844cb528dbcf767e6f3b13ee19f18084457d7bfe7cf6283b6ccca62535138ecf",
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "attacker",
+          "action": "send",
+          "tx_hash": "0x291f964a8b778e03a60fc39f065bec269f843a2c0ac4575a0a352f30251c9bda",
+          "to": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+          "call": {
+            "function": "setRate",
+            "args": {
+              "tokenIn": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+              "tokenOut": "0xA15BB66138824a1c7167f5E85b957d04Dd34E468",
+              "numerator": "3",
+              "denominator": "10000"
+            }
+          },
+          "mined": {
+            "block": "8",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x60a9a323bb2498f6b95296c9b12c6e060c0208a58677337df86e692d52798da3",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "value": "0",
+          "call": {
+            "function": "approve",
+            "args": {
+              "spender": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+              "amount": "100000000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "9",
+            "index": "0",
+            "status": "success"
+          },
+          "firewall": {
+            "decision": "allow",
+            "reason": null,
+            "mandate_transaction": 1,
+            "violations": [],
+            "anomalies": [],
+            "simulation_error": null,
+            "explanation": "ALLOWED  tx 0x60a9a323bb2498f6b95296c9b12c6e060c0208a58677337df86e692d52798da3\n  under mandate <mandate S>\nYou asked:\n  you said: \"swap at most 100 mUSD for mETH on mockswap, at least 0.03 mETH\"\n  1. SWAP sell at most 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35)\n       buy mETH (token 0xA15BB66138824a1c7167f5E85b957d04Dd34E468)\n       minimum: at least 0.03 mETH per 100 mUSD sold\n       only via:\n         MockRouter (0xb19b36b1456E65E3A6D514D3F715f204BD59f431)\n       left before this transaction: 100 mUSD\nThis transaction:\n  moves no assets into or out of your account (apart from gas)\nCharged:\n  intent 1: approves its venues to spend up to 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35) (not charged; the swap that uses it is)"
+          }
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0xc1f4ed5cae6c0dbccfb999a29eb644e20f8277ee6618c2a95662633d51639869",
+          "to": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+          "value": "0",
+          "call": {
+            "function": "exactInputSingle",
+            "args": {
+              "tokenIn": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+              "tokenOut": "0xA15BB66138824a1c7167f5E85b957d04Dd34E468",
+              "recipient": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+              "amountIn": "100000000",
+              "amountOutMinimum": "30000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "10",
+            "index": "0",
+            "status": "success"
+          },
+          "firewall": {
+            "decision": "allow",
+            "reason": null,
+            "mandate_transaction": 2,
+            "violations": [],
+            "anomalies": [],
+            "simulation_error": null,
+            "explanation": "ALLOWED  tx 0xc1f4ed5cae6c0dbccfb999a29eb644e20f8277ee6618c2a95662633d51639869\n  under mandate <mandate S>\nYou asked:\n  you said: \"swap at most 100 mUSD for mETH on mockswap, at least 0.03 mETH\"\n  1. SWAP sell at most 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35)\n       buy mETH (token 0xA15BB66138824a1c7167f5E85b957d04Dd34E468)\n       minimum: at least 0.03 mETH per 100 mUSD sold\n       only via:\n         MockRouter (0xb19b36b1456E65E3A6D514D3F715f204BD59f431)\n       left before this transaction: 100 mUSD\nThis transaction:\n  sends 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35) to MockRouter (0xb19b36b1456E65E3A6D514D3F715f204BD59f431)\n  receives 0.03 mETH (token 0xA15BB66138824a1c7167f5E85b957d04Dd34E468) from MockRouter (0xb19b36b1456E65E3A6D514D3F715f204BD59f431)\nCharged:\n  intent 1: 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35), 0 mUSD left"
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "B1",
+      "kind": "benign",
+      "mandate": "E",
+      "title": "0.004 ETH to Bob",
+      "defense": "none",
+      "cell": "allowed",
+      "harms": [],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "9999995958470033424000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000004000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x674632f52ccbafc8d5ba2cf1433ef8e897c33ef204a2a11bb276549cffc9dc7d",
+          "to": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+          "value": "4000000000000000",
+          "call": null,
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "B1",
+      "kind": "benign",
+      "mandate": "E",
+      "title": "0.004 ETH to Bob",
+      "defense": "rules",
+      "cell": "allowed",
+      "harms": [],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "9999995958470033424000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000004000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x674632f52ccbafc8d5ba2cf1433ef8e897c33ef204a2a11bb276549cffc9dc7d",
+          "to": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+          "value": "4000000000000000",
+          "call": null,
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "B1",
+      "kind": "benign",
+      "mandate": "E",
+      "title": "0.004 ETH to Bob",
+      "defense": "firewall",
+      "cell": "allowed",
+      "harms": [],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "9999995958470033424000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000004000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x674632f52ccbafc8d5ba2cf1433ef8e897c33ef204a2a11bb276549cffc9dc7d",
+          "to": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+          "value": "4000000000000000",
+          "call": null,
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          },
+          "firewall": {
+            "decision": "allow",
+            "reason": null,
+            "mandate_transaction": 1,
+            "violations": [],
+            "anomalies": [],
+            "simulation_error": null,
+            "explanation": "ALLOWED  tx 0x674632f52ccbafc8d5ba2cf1433ef8e897c33ef204a2a11bb276549cffc9dc7d\n  under mandate <mandate E>\nYou asked:\n  you said: \"send up to 10000000000000000 wei to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\"\n  1. SEND at most 0.01 ETH (native)\n       to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\n       left before this transaction: 0.01 ETH\nThis transaction:\n  sends 0.004 ETH (native) to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\nCharged:\n  intent 1: 0.004 ETH (native), 0.006 ETH left"
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "B2",
+      "kind": "benign",
+      "mandate": "T",
+      "title": "50 mUSD to Bob",
+      "defense": "none",
+      "cell": "allowed",
+      "harms": [],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "9999999898289156620464",
+          "mUSD": "50000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "50000000",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x99fb55e0d24ab1e1e7c505ef5e2649169c486b138d7bcb158cc4286b9edd01f3",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "value": "0",
+          "call": {
+            "function": "transfer",
+            "args": {
+              "to": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+              "amount": "50000000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "B2",
+      "kind": "benign",
+      "mandate": "T",
+      "title": "50 mUSD to Bob",
+      "defense": "rules",
+      "cell": "allowed",
+      "harms": [],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "9999999898289156620464",
+          "mUSD": "50000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "50000000",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x99fb55e0d24ab1e1e7c505ef5e2649169c486b138d7bcb158cc4286b9edd01f3",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "value": "0",
+          "call": {
+            "function": "transfer",
+            "args": {
+              "to": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+              "amount": "50000000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "B2",
+      "kind": "benign",
+      "mandate": "T",
+      "title": "50 mUSD to Bob",
+      "defense": "firewall",
+      "cell": "allowed",
+      "harms": [],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "9999999898289156620464",
+          "mUSD": "50000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "50000000",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x99fb55e0d24ab1e1e7c505ef5e2649169c486b138d7bcb158cc4286b9edd01f3",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "value": "0",
+          "call": {
+            "function": "transfer",
+            "args": {
+              "to": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+              "amount": "50000000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          },
+          "firewall": {
+            "decision": "allow",
+            "reason": null,
+            "mandate_transaction": 1,
+            "violations": [],
+            "anomalies": [],
+            "simulation_error": null,
+            "explanation": "ALLOWED  tx 0x99fb55e0d24ab1e1e7c505ef5e2649169c486b138d7bcb158cc4286b9edd01f3\n  under mandate <mandate T>\nYou asked:\n  you said: \"send at most 100 mUSD to Bob\"\n  1. SEND at most 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35)\n       to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\n       left before this transaction: 100 mUSD\nThis transaction:\n  sends 50 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35) to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\nCharged:\n  intent 1: 50 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35), 50 mUSD left"
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "B3",
+      "kind": "benign",
+      "mandate": "S",
+      "title": "approve 100, then an honest swap",
+      "defense": "none",
+      "cell": "allowed",
+      "harms": [],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "9999999732600116728322",
+          "mUSD": "0",
+          "mETH": "30000"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x60a9a323bb2498f6b95296c9b12c6e060c0208a58677337df86e692d52798da3",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "value": "0",
+          "call": {
+            "function": "approve",
+            "args": {
+              "spender": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+              "amount": "100000000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0xc1f4ed5cae6c0dbccfb999a29eb644e20f8277ee6618c2a95662633d51639869",
+          "to": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+          "value": "0",
+          "call": {
+            "function": "exactInputSingle",
+            "args": {
+              "tokenIn": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+              "tokenOut": "0xA15BB66138824a1c7167f5E85b957d04Dd34E468",
+              "recipient": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+              "amountIn": "100000000",
+              "amountOutMinimum": "30000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "8",
+            "index": "0",
+            "status": "success"
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "B3",
+      "kind": "benign",
+      "mandate": "S",
+      "title": "approve 100, then an honest swap",
+      "defense": "rules",
+      "cell": "allowed",
+      "harms": [],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "9999999732600116728322",
+          "mUSD": "0",
+          "mETH": "30000"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x60a9a323bb2498f6b95296c9b12c6e060c0208a58677337df86e692d52798da3",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "value": "0",
+          "call": {
+            "function": "approve",
+            "args": {
+              "spender": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+              "amount": "100000000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0xc1f4ed5cae6c0dbccfb999a29eb644e20f8277ee6618c2a95662633d51639869",
+          "to": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+          "value": "0",
+          "call": {
+            "function": "exactInputSingle",
+            "args": {
+              "tokenIn": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+              "tokenOut": "0xA15BB66138824a1c7167f5E85b957d04Dd34E468",
+              "recipient": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+              "amountIn": "100000000",
+              "amountOutMinimum": "30000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "8",
+            "index": "0",
+            "status": "success"
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "B3",
+      "kind": "benign",
+      "mandate": "S",
+      "title": "approve 100, then an honest swap",
+      "defense": "firewall",
+      "cell": "allowed",
+      "harms": [],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "9999999732600116728322",
+          "mUSD": "0",
+          "mETH": "30000"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x60a9a323bb2498f6b95296c9b12c6e060c0208a58677337df86e692d52798da3",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "value": "0",
+          "call": {
+            "function": "approve",
+            "args": {
+              "spender": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+              "amount": "100000000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          },
+          "firewall": {
+            "decision": "allow",
+            "reason": null,
+            "mandate_transaction": 1,
+            "violations": [],
+            "anomalies": [],
+            "simulation_error": null,
+            "explanation": "ALLOWED  tx 0x60a9a323bb2498f6b95296c9b12c6e060c0208a58677337df86e692d52798da3\n  under mandate <mandate S>\nYou asked:\n  you said: \"swap at most 100 mUSD for mETH on mockswap, at least 0.03 mETH\"\n  1. SWAP sell at most 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35)\n       buy mETH (token 0xA15BB66138824a1c7167f5E85b957d04Dd34E468)\n       minimum: at least 0.03 mETH per 100 mUSD sold\n       only via:\n         MockRouter (0xb19b36b1456E65E3A6D514D3F715f204BD59f431)\n       left before this transaction: 100 mUSD\nThis transaction:\n  moves no assets into or out of your account (apart from gas)\nCharged:\n  intent 1: approves its venues to spend up to 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35) (not charged; the swap that uses it is)"
+          }
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0xc1f4ed5cae6c0dbccfb999a29eb644e20f8277ee6618c2a95662633d51639869",
+          "to": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+          "value": "0",
+          "call": {
+            "function": "exactInputSingle",
+            "args": {
+              "tokenIn": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+              "tokenOut": "0xA15BB66138824a1c7167f5E85b957d04Dd34E468",
+              "recipient": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+              "amountIn": "100000000",
+              "amountOutMinimum": "30000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "8",
+            "index": "0",
+            "status": "success"
+          },
+          "firewall": {
+            "decision": "allow",
+            "reason": null,
+            "mandate_transaction": 2,
+            "violations": [],
+            "anomalies": [],
+            "simulation_error": null,
+            "explanation": "ALLOWED  tx 0xc1f4ed5cae6c0dbccfb999a29eb644e20f8277ee6618c2a95662633d51639869\n  under mandate <mandate S>\nYou asked:\n  you said: \"swap at most 100 mUSD for mETH on mockswap, at least 0.03 mETH\"\n  1. SWAP sell at most 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35)\n       buy mETH (token 0xA15BB66138824a1c7167f5E85b957d04Dd34E468)\n       minimum: at least 0.03 mETH per 100 mUSD sold\n       only via:\n         MockRouter (0xb19b36b1456E65E3A6D514D3F715f204BD59f431)\n       left before this transaction: 100 mUSD\nThis transaction:\n  sends 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35) to MockRouter (0xb19b36b1456E65E3A6D514D3F715f204BD59f431)\n  receives 0.03 mETH (token 0xA15BB66138824a1c7167f5E85b957d04Dd34E468) from MockRouter (0xb19b36b1456E65E3A6D514D3F715f204BD59f431)\nCharged:\n  intent 1: 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35), 0 mUSD left"
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "B4",
+      "kind": "benign",
+      "mandate": "S",
+      "title": "swap at a better price than the minimum",
+      "defense": "none",
+      "cell": "allowed",
+      "harms": [],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "9999999733124992640338",
+          "mUSD": "0",
+          "mETH": "40000"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "market",
+          "action": "set_rate",
+          "rate": [
+            "4",
+            "10000"
+          ],
+          "tx_hash": "0x844cb528dbcf767e6f3b13ee19f18084457d7bfe7cf6283b6ccca62535138ecf",
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x60a9a323bb2498f6b95296c9b12c6e060c0208a58677337df86e692d52798da3",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "value": "0",
+          "call": {
+            "function": "approve",
+            "args": {
+              "spender": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+              "amount": "100000000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "8",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0xc1f4ed5cae6c0dbccfb999a29eb644e20f8277ee6618c2a95662633d51639869",
+          "to": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+          "value": "0",
+          "call": {
+            "function": "exactInputSingle",
+            "args": {
+              "tokenIn": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+              "tokenOut": "0xA15BB66138824a1c7167f5E85b957d04Dd34E468",
+              "recipient": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+              "amountIn": "100000000",
+              "amountOutMinimum": "30000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "9",
+            "index": "0",
+            "status": "success"
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "B4",
+      "kind": "benign",
+      "mandate": "S",
+      "title": "swap at a better price than the minimum",
+      "defense": "rules",
+      "cell": "allowed",
+      "harms": [],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "9999999733124992640338",
+          "mUSD": "0",
+          "mETH": "40000"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "market",
+          "action": "set_rate",
+          "rate": [
+            "4",
+            "10000"
+          ],
+          "tx_hash": "0x844cb528dbcf767e6f3b13ee19f18084457d7bfe7cf6283b6ccca62535138ecf",
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x60a9a323bb2498f6b95296c9b12c6e060c0208a58677337df86e692d52798da3",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "value": "0",
+          "call": {
+            "function": "approve",
+            "args": {
+              "spender": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+              "amount": "100000000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "8",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0xc1f4ed5cae6c0dbccfb999a29eb644e20f8277ee6618c2a95662633d51639869",
+          "to": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+          "value": "0",
+          "call": {
+            "function": "exactInputSingle",
+            "args": {
+              "tokenIn": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+              "tokenOut": "0xA15BB66138824a1c7167f5E85b957d04Dd34E468",
+              "recipient": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+              "amountIn": "100000000",
+              "amountOutMinimum": "30000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "9",
+            "index": "0",
+            "status": "success"
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "B4",
+      "kind": "benign",
+      "mandate": "S",
+      "title": "swap at a better price than the minimum",
+      "defense": "firewall",
+      "cell": "allowed",
+      "harms": [],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "9999999733124992640338",
+          "mUSD": "0",
+          "mETH": "40000"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "market",
+          "action": "set_rate",
+          "rate": [
+            "4",
+            "10000"
+          ],
+          "tx_hash": "0x844cb528dbcf767e6f3b13ee19f18084457d7bfe7cf6283b6ccca62535138ecf",
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x60a9a323bb2498f6b95296c9b12c6e060c0208a58677337df86e692d52798da3",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "value": "0",
+          "call": {
+            "function": "approve",
+            "args": {
+              "spender": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+              "amount": "100000000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "8",
+            "index": "0",
+            "status": "success"
+          },
+          "firewall": {
+            "decision": "allow",
+            "reason": null,
+            "mandate_transaction": 1,
+            "violations": [],
+            "anomalies": [],
+            "simulation_error": null,
+            "explanation": "ALLOWED  tx 0x60a9a323bb2498f6b95296c9b12c6e060c0208a58677337df86e692d52798da3\n  under mandate <mandate S>\nYou asked:\n  you said: \"swap at most 100 mUSD for mETH on mockswap, at least 0.03 mETH\"\n  1. SWAP sell at most 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35)\n       buy mETH (token 0xA15BB66138824a1c7167f5E85b957d04Dd34E468)\n       minimum: at least 0.03 mETH per 100 mUSD sold\n       only via:\n         MockRouter (0xb19b36b1456E65E3A6D514D3F715f204BD59f431)\n       left before this transaction: 100 mUSD\nThis transaction:\n  moves no assets into or out of your account (apart from gas)\nCharged:\n  intent 1: approves its venues to spend up to 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35) (not charged; the swap that uses it is)"
+          }
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0xc1f4ed5cae6c0dbccfb999a29eb644e20f8277ee6618c2a95662633d51639869",
+          "to": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+          "value": "0",
+          "call": {
+            "function": "exactInputSingle",
+            "args": {
+              "tokenIn": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+              "tokenOut": "0xA15BB66138824a1c7167f5E85b957d04Dd34E468",
+              "recipient": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+              "amountIn": "100000000",
+              "amountOutMinimum": "30000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "9",
+            "index": "0",
+            "status": "success"
+          },
+          "firewall": {
+            "decision": "allow",
+            "reason": null,
+            "mandate_transaction": 2,
+            "violations": [],
+            "anomalies": [],
+            "simulation_error": null,
+            "explanation": "ALLOWED  tx 0xc1f4ed5cae6c0dbccfb999a29eb644e20f8277ee6618c2a95662633d51639869\n  under mandate <mandate S>\nYou asked:\n  you said: \"swap at most 100 mUSD for mETH on mockswap, at least 0.03 mETH\"\n  1. SWAP sell at most 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35)\n       buy mETH (token 0xA15BB66138824a1c7167f5E85b957d04Dd34E468)\n       minimum: at least 0.03 mETH per 100 mUSD sold\n       only via:\n         MockRouter (0xb19b36b1456E65E3A6D514D3F715f204BD59f431)\n       left before this transaction: 100 mUSD\nThis transaction:\n  sends 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35) to MockRouter (0xb19b36b1456E65E3A6D514D3F715f204BD59f431)\n  receives 0.04 mETH (token 0xA15BB66138824a1c7167f5E85b957d04Dd34E468) from MockRouter (0xb19b36b1456E65E3A6D514D3F715f204BD59f431)\nCharged:\n  intent 1: 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35), 0 mUSD left"
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "B5",
+      "kind": "benign",
+      "mandate": "E",
+      "title": "the same signed bytes re-sent (agent retry)",
+      "defense": "none",
+      "cell": "allowed",
+      "harms": [],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "9999995958470033424000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000004000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x674632f52ccbafc8d5ba2cf1433ef8e897c33ef204a2a11bb276549cffc9dc7d",
+          "to": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+          "value": "4000000000000000",
+          "call": null,
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "agent",
+          "action": "resend",
+          "tx_hash": "0x674632f52ccbafc8d5ba2cf1433ef8e897c33ef204a2a11bb276549cffc9dc7d",
+          "to": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+          "value": "4000000000000000",
+          "call": null,
+          "answer": "forwarded",
+          "upstream_error": "nonce too low"
+        }
+      ]
+    },
+    {
+      "scenario": "B5",
+      "kind": "benign",
+      "mandate": "E",
+      "title": "the same signed bytes re-sent (agent retry)",
+      "defense": "rules",
+      "cell": "allowed",
+      "harms": [],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "9999995958470033424000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000004000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x674632f52ccbafc8d5ba2cf1433ef8e897c33ef204a2a11bb276549cffc9dc7d",
+          "to": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+          "value": "4000000000000000",
+          "call": null,
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "agent",
+          "action": "resend",
+          "tx_hash": "0x674632f52ccbafc8d5ba2cf1433ef8e897c33ef204a2a11bb276549cffc9dc7d",
+          "to": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+          "value": "4000000000000000",
+          "call": null,
+          "answer": "forwarded",
+          "upstream_error": "nonce too low"
+        }
+      ]
+    },
+    {
+      "scenario": "B5",
+      "kind": "benign",
+      "mandate": "E",
+      "title": "the same signed bytes re-sent (agent retry)",
+      "defense": "firewall",
+      "cell": "allowed",
+      "harms": [],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "9999995958470033424000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000004000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x674632f52ccbafc8d5ba2cf1433ef8e897c33ef204a2a11bb276549cffc9dc7d",
+          "to": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+          "value": "4000000000000000",
+          "call": null,
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          },
+          "firewall": {
+            "decision": "allow",
+            "reason": null,
+            "mandate_transaction": 1,
+            "violations": [],
+            "anomalies": [],
+            "simulation_error": null,
+            "explanation": "ALLOWED  tx 0x674632f52ccbafc8d5ba2cf1433ef8e897c33ef204a2a11bb276549cffc9dc7d\n  under mandate <mandate E>\nYou asked:\n  you said: \"send up to 10000000000000000 wei to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\"\n  1. SEND at most 0.01 ETH (native)\n       to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\n       left before this transaction: 0.01 ETH\nThis transaction:\n  sends 0.004 ETH (native) to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8\nCharged:\n  intent 1: 0.004 ETH (native), 0.006 ETH left"
+          }
+        },
+        {
+          "actor": "agent",
+          "action": "resend",
+          "tx_hash": "0x674632f52ccbafc8d5ba2cf1433ef8e897c33ef204a2a11bb276549cffc9dc7d",
+          "to": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+          "value": "4000000000000000",
+          "call": null,
+          "answer": "forwarded",
+          "upstream_error": "nonce too low",
+          "firewall": {
+            "decision": "allow",
+            "reason": "re-send of a transaction already charged",
+            "mandate_transaction": null,
+            "violations": [],
+            "anomalies": [],
+            "simulation_error": null,
+            "explanation": null
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "B6",
+      "kind": "benign",
+      "mandate": "S",
+      "title": "unlimited approval, then the swap",
+      "defense": "none",
+      "cell": "allowed",
+      "harms": [],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "9999999728625598911539",
+          "mUSD": "0",
+          "mETH": "30000"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x061ba73106b8f3c74375c29369532809c892f78b7019ffeb85bce7f5318bbc31",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "value": "0",
+          "call": {
+            "function": "approve",
+            "args": {
+              "spender": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+              "amount": "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0xc1f4ed5cae6c0dbccfb999a29eb644e20f8277ee6618c2a95662633d51639869",
+          "to": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+          "value": "0",
+          "call": {
+            "function": "exactInputSingle",
+            "args": {
+              "tokenIn": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+              "tokenOut": "0xA15BB66138824a1c7167f5E85b957d04Dd34E468",
+              "recipient": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+              "amountIn": "100000000",
+              "amountOutMinimum": "30000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "8",
+            "index": "0",
+            "status": "success"
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "B6",
+      "kind": "benign",
+      "mandate": "S",
+      "title": "unlimited approval, then the swap",
+      "defense": "rules",
+      "cell": "false positive",
+      "harms": [],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x061ba73106b8f3c74375c29369532809c892f78b7019ffeb85bce7f5318bbc31",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "value": "0",
+          "call": {
+            "function": "approve",
+            "args": {
+              "spender": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+              "amount": "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+            }
+          },
+          "answer": "refused",
+          "reason": "approval over the spend limit"
+        }
+      ]
+    },
+    {
+      "scenario": "B6",
+      "kind": "benign",
+      "mandate": "S",
+      "title": "unlimited approval, then the swap",
+      "defense": "firewall",
+      "cell": "false positive",
+      "harms": [],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x061ba73106b8f3c74375c29369532809c892f78b7019ffeb85bce7f5318bbc31",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "value": "0",
+          "call": {
+            "function": "approve",
+            "args": {
+              "spender": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+              "amount": "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+            }
+          },
+          "answer": "refused",
+          "reason": "transaction rejected: off-mandate: unlimited approval not allowed",
+          "firewall": {
+            "decision": "block",
+            "reason": "off-mandate: unlimited approval not allowed",
+            "mandate_transaction": null,
+            "violations": [
+              "unlimited_approval"
+            ],
+            "anomalies": [],
+            "simulation_error": null,
+            "explanation": "BLOCKED  tx 0x061ba73106b8f3c74375c29369532809c892f78b7019ffeb85bce7f5318bbc31\n  under mandate <mandate S>\nYou asked:\n  you said: \"swap at most 100 mUSD for mETH on mockswap, at least 0.03 mETH\"\n  1. SWAP sell at most 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35)\n       buy mETH (token 0xA15BB66138824a1c7167f5E85b957d04Dd34E468)\n       minimum: at least 0.03 mETH per 100 mUSD sold\n       only via:\n         MockRouter (0xb19b36b1456E65E3A6D514D3F715f204BD59f431)\n       left before this transaction: 100 mUSD\nThis transaction:\n  moves no assets into or out of your account (apart from gas)\nWhy:\n  - it approves MockRouter (0xb19b36b1456E65E3A6D514D3F715f204BD59f431) to spend an unlimited amount of mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35)\nNothing was charged."
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "B7",
+      "kind": "benign",
+      "mandate": "S",
+      "title": "approve + swap back to back, not waiting for the approval to be mined",
+      "defense": "none",
+      "cell": "allowed",
+      "harms": [],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "9999999732254327867072",
+          "mUSD": "0",
+          "mETH": "30000"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "chain",
+          "action": "automine",
+          "on": false
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x60a9a323bb2498f6b95296c9b12c6e060c0208a58677337df86e692d52798da3",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "value": "0",
+          "call": {
+            "function": "approve",
+            "args": {
+              "spender": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+              "amount": "100000000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0xc1f4ed5cae6c0dbccfb999a29eb644e20f8277ee6618c2a95662633d51639869",
+          "to": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+          "value": "0",
+          "call": {
+            "function": "exactInputSingle",
+            "args": {
+              "tokenIn": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+              "tokenOut": "0xA15BB66138824a1c7167f5E85b957d04Dd34E468",
+              "recipient": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+              "amountIn": "100000000",
+              "amountOutMinimum": "30000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "7",
+            "index": "1",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "chain",
+          "action": "mine"
+        },
+        {
+          "actor": "chain",
+          "action": "automine",
+          "on": true
+        }
+      ]
+    },
+    {
+      "scenario": "B7",
+      "kind": "benign",
+      "mandate": "S",
+      "title": "approve + swap back to back, not waiting for the approval to be mined",
+      "defense": "rules",
+      "cell": "allowed",
+      "harms": [],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "9999999732254327867072",
+          "mUSD": "0",
+          "mETH": "30000"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "chain",
+          "action": "automine",
+          "on": false
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x60a9a323bb2498f6b95296c9b12c6e060c0208a58677337df86e692d52798da3",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "value": "0",
+          "call": {
+            "function": "approve",
+            "args": {
+              "spender": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+              "amount": "100000000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0xc1f4ed5cae6c0dbccfb999a29eb644e20f8277ee6618c2a95662633d51639869",
+          "to": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+          "value": "0",
+          "call": {
+            "function": "exactInputSingle",
+            "args": {
+              "tokenIn": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+              "tokenOut": "0xA15BB66138824a1c7167f5E85b957d04Dd34E468",
+              "recipient": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+              "amountIn": "100000000",
+              "amountOutMinimum": "30000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "7",
+            "index": "1",
+            "status": "success"
+          }
+        },
+        {
+          "actor": "chain",
+          "action": "mine"
+        },
+        {
+          "actor": "chain",
+          "action": "automine",
+          "on": true
+        }
+      ]
+    },
+    {
+      "scenario": "B7",
+      "kind": "benign",
+      "mandate": "S",
+      "title": "approve + swap back to back, not waiting for the approval to be mined",
+      "defense": "firewall",
+      "cell": "false positive",
+      "harms": [],
+      "holdings_before": {
+        "agent": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "holdings_after": {
+        "agent": {
+          "ETH": "9999999908756685815072",
+          "mUSD": "100000000",
+          "mETH": "0"
+        },
+        "bob": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        },
+        "attacker": {
+          "ETH": "10000000000000000000000",
+          "mUSD": "0",
+          "mETH": "0"
+        }
+      },
+      "steps": [
+        {
+          "actor": "chain",
+          "action": "automine",
+          "on": false
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0x60a9a323bb2498f6b95296c9b12c6e060c0208a58677337df86e692d52798da3",
+          "to": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+          "value": "0",
+          "call": {
+            "function": "approve",
+            "args": {
+              "spender": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+              "amount": "100000000"
+            }
+          },
+          "answer": "forwarded",
+          "upstream_error": null,
+          "mined": {
+            "block": "7",
+            "index": "0",
+            "status": "success"
+          },
+          "firewall": {
+            "decision": "allow",
+            "reason": null,
+            "mandate_transaction": 1,
+            "violations": [],
+            "anomalies": [],
+            "simulation_error": null,
+            "explanation": "ALLOWED  tx 0x60a9a323bb2498f6b95296c9b12c6e060c0208a58677337df86e692d52798da3\n  under mandate <mandate S>\nYou asked:\n  you said: \"swap at most 100 mUSD for mETH on mockswap, at least 0.03 mETH\"\n  1. SWAP sell at most 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35)\n       buy mETH (token 0xA15BB66138824a1c7167f5E85b957d04Dd34E468)\n       minimum: at least 0.03 mETH per 100 mUSD sold\n       only via:\n         MockRouter (0xb19b36b1456E65E3A6D514D3F715f204BD59f431)\n       left before this transaction: 100 mUSD\nThis transaction:\n  moves no assets into or out of your account (apart from gas)\nCharged:\n  intent 1: approves its venues to spend up to 100 mUSD (token 0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35) (not charged; the swap that uses it is)"
+          }
+        },
+        {
+          "actor": "agent",
+          "action": "send",
+          "tx_hash": "0xc1f4ed5cae6c0dbccfb999a29eb644e20f8277ee6618c2a95662633d51639869",
+          "to": "0xb19b36b1456E65E3A6D514D3F715f204BD59f431",
+          "value": "0",
+          "call": {
+            "function": "exactInputSingle",
+            "args": {
+              "tokenIn": "0x700b6A60ce7EaaEA56F065753d8dcB9653dbAD35",
+              "tokenOut": "0xA15BB66138824a1c7167f5E85b957d04Dd34E468",
+              "recipient": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+              "amountIn": "100000000",
+              "amountOutMinimum": "30000"
+            }
+          },
+          "answer": "refused",
+          "reason": "transaction rejected: the simulated chain did not mine the transaction (its nonce may be too high)",
+          "firewall": {
+            "decision": "block",
+            "reason": "the simulated chain did not mine the transaction (its nonce may be too high)",
+            "mandate_transaction": null,
+            "violations": [],
+            "anomalies": [],
+            "simulation_error": "the simulated chain did not mine the transaction (its nonce may be too high)",
+            "explanation": null
+          }
+        },
+        {
+          "actor": "chain",
+          "action": "mine"
+        },
+        {
+          "actor": "chain",
+          "action": "automine",
+          "on": true
+        }
+      ]
+    }
+  ]
+}

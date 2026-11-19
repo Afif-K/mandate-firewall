@@ -4,6 +4,15 @@ Both hold only what reruns reproduce: cells, reasons, harms and balance
 changes, but no timings and no commit hash (a history rewrite would break a
 hash; docs/v0.1-plan.md). Running the suite again on the same code and
 anvil gives identical files.
+
+benchmark/traces.json, from the same run, is every run step by step for the
+project website's recorded runs (docs/website-plan.md §1). Same rule: of the
+firewall's audit records it keeps the decision, reason, violation and
+anomaly codes and the explanation, and replaces the mandate id (it hashes
+the mandate's creation time) with a label such as "<mandate S>". The
+timestamps and the simulated effects (whose fork block hash changes with
+the time) are left out; the explanation's "This transaction" part states
+the effects.
 """
 
 import json
@@ -14,8 +23,19 @@ from importlib.metadata import version
 from typing import Any
 
 from benchmark.defenses import RuleConfig
-from benchmark.harness import AGENT, ATTACKER, MARKET, Cell, Result, Scenario
+from benchmark.harness import (
+    AGENT,
+    ATTACKER,
+    CHAIN_ID,
+    MARKET,
+    MARKET_ACCOUNT,
+    Cell,
+    Result,
+    Scenario,
+)
 from benchmark.scenarios import mandate
+from mandate_firewall.mandate.registry import Registry
+from mandate_firewall.mandate.render import intent_lines
 from tests.integration.chain import BOB
 
 SYMBOLS = {
@@ -61,6 +81,101 @@ def to_json(results: Sequence[Result], scenarios: Sequence[Scenario]) -> str:
         "package_version": version("mandate-firewall"),
         "anvil": anvil_version(),
         "results": rows,
+    }
+    return json.dumps(document, indent=2, ensure_ascii=False) + "\n"
+
+
+def mandate_label(which: str) -> str:
+    return f"<mandate {which}>"
+
+
+def firewall_view(audit: dict[str, Any], which: str) -> dict[str, Any]:
+    """The reproducible part of one firewall audit record."""
+    mandate_id = audit.get("mandate_id")
+
+    def label(text: str | None) -> str | None:
+        if text is None or mandate_id is None:
+            return text
+        return text.replace(mandate_id, mandate_label(which))
+
+    verdict = audit.get("verdict") or {}
+    return {
+        "decision": audit["decision"],
+        "reason": label(audit.get("reason")),
+        "mandate_transaction": audit.get("mandate_transaction"),
+        "violations": [v["code"] for v in verdict.get("violations", [])],
+        "anomalies": [a["code"] for a in verdict.get("anomalies", [])],
+        "simulation_error": audit.get("simulation_error"),
+        "explanation": label(audit.get("explanation")),
+    }
+
+
+def trace_entry(result: Result, scenario: Scenario) -> dict[str, Any]:
+    """One run's trace, normalised: what traces.json holds for it."""
+    steps = []
+    for step in result.trace["steps"]:
+        step = dict(step)
+        audit = step.pop("firewall_audit", None)
+        if audit is not None:
+            step["firewall"] = firewall_view(audit, scenario.mandate)
+        steps.append(step)
+    return {
+        "scenario": result.scenario,
+        "kind": scenario.kind,
+        "mandate": scenario.mandate,
+        "title": scenario.title,
+        "defense": result.defense,
+        "cell": str(result.cell),
+        "harms": list(result.harms),
+        "holdings_before": result.trace["holdings_before"],
+        "holdings_after": result.trace["holdings_after"],
+        "steps": steps,
+    }
+
+
+def mandate_text(which: str, registry: Registry) -> dict[str, Any]:
+    """A mandate as the firewall's explanations state it ("You asked")."""
+    m = mandate(which)
+    lines = []
+    for number, intent in enumerate(m.intents, start=1):
+        lines += intent_lines(number, intent, registry)
+    return {
+        "label": mandate_label(which),
+        "instruction": m.instruction,
+        "lines": lines,
+        "max_transactions": m.limits.max_transactions,
+    }
+
+
+def to_traces(results: Sequence[Result], scenarios: Sequence[Scenario], registry: Registry) -> str:
+    kinds = {s.id: s for s in scenarios}
+    document = {
+        "suite": "mandate-firewall scenario suite v0.1",
+        "package_version": version("mandate-firewall"),
+        "anvil": anvil_version(),
+        "chain_id": CHAIN_ID,
+        "note": (
+            "Recorded runs on a fresh local anvil each, written by `uv run python -m "
+            "benchmark`; don't edit by hand. Integers are decimal strings. Mandate ids are "
+            "replaced by labels such as <mandate S>, because the real id hashes the time the "
+            "mandate was created; timestamps are left out."
+        ),
+        "parties": {
+            "agent": AGENT,
+            "Bob": BOB,
+            "attacker": ATTACKER,
+            "market": MARKET_ACCOUNT,
+            "mUSD": MARKET.musd,
+            "mETH": MARKET.meth,
+            "mockswap router": MARKET.router,
+        },
+        "assets": {
+            "ETH": {"address": None, "decimals": 18},
+            "mUSD": {"address": MARKET.musd, "decimals": 6},
+            "mETH": {"address": MARKET.meth, "decimals": 6},
+        },
+        "mandates": {which: mandate_text(which, registry) for which in ("E", "T", "S")},
+        "runs": [trace_entry(r, kinds[r.scenario]) for r in results],
     }
     return json.dumps(document, indent=2, ensure_ascii=False) + "\n"
 
@@ -127,7 +242,9 @@ def to_markdown(
         "",
         "Written by `uv run python -m benchmark` (a full run); don't edit by hand. "
         "`tests/integration/test_benchmark.py` reruns every cell and fails if one differs "
-        "from the expected value in `benchmark/scenarios.py`. Raw data: `results.json`.",
+        "from the expected value in `benchmark/scenarios.py`. Raw data: `results.json`; "
+        "every run step by step (transactions, each defense's answer, the firewall's "
+        "explanations, balances): `traces.json`.",
         "",
         "**Read this first: selection bias.** The defender wrote these scenarios, so they "
         "illustrate what each defense does; they don't measure it. The real benchmark, on "

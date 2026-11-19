@@ -233,6 +233,14 @@ def m2(run: Run) -> bool:
     )
     deadline = 2**40
     v, r, s = permit_signature(ATTACKER, 100 * USD, nonce, deadline)
+    run.record(
+        "agent",
+        "sign_permit",
+        token=MARKET.musd,
+        spender=ATTACKER,
+        value=str(100 * USD),
+        deadline=str(deadline),
+    )
     permit = PERMIT_ERC20.call_data(
         "permit", AGENT, ATTACKER, 100 * USD, deadline, v, r.to_bytes(32), s.to_bytes(32)
     )

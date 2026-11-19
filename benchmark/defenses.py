@@ -40,6 +40,9 @@ class Submission:
     blocked: bool  # the defense refused it (the upstream never saw it)
     reason: str | None  # the defense's reason, or the upstream's error
     response: dict[str, Any]
+    # The firewall's audit record for this submission, as written (None for
+    # the other defenses, or if it refused before writing one).
+    audit: dict[str, Any] | None = None
 
     @property
     def reached_chain(self) -> bool:
@@ -201,11 +204,12 @@ class Firewall:
         error = response.get("error")
         tx_hash = tx_hash_of(raw)
         records = [r for r in self.proxy.audit_records()[seen:] if r["hash"] == tx_hash]
-        if records:
-            blocked = records[-1]["decision"] != "allow"
+        audit = records[-1] if records else None
+        if audit is not None:
+            blocked = audit["decision"] != "allow"
         else:  # refused before an audit record could be written
             blocked = error is not None and error["code"] == TRANSACTION_REJECTED
-        return Submission(raw, tx_hash, blocked, error and error["message"], response)
+        return Submission(raw, tx_hash, blocked, error and error["message"], response, audit)
 
     def spent(self) -> Spent | None:
         """What the store charged, per asset of each intent."""

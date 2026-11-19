@@ -1,6 +1,6 @@
 # Scenario suite results (v0.1)
 
-Written by `uv run python -m benchmark` (a full run); don't edit by hand. `tests/integration/test_benchmark.py` reruns every cell and fails if one differs from the expected value in `benchmark/scenarios.py`. Raw data: `results.json`.
+Written by `uv run python -m benchmark` (a full run); don't edit by hand. `tests/integration/test_benchmark.py` reruns every cell and fails if one differs from the expected value in `benchmark/scenarios.py`. Raw data: `results.json`; every run step by step (transactions, each defense's answer, the firewall's explanations, balances): `traces.json`.
 
 **Read this first: selection bias.** The defender wrote these scenarios, so they illustrate what each defense does; they don't measure it. The real benchmark, on third-party scenarios, is roadmap item M8.
 

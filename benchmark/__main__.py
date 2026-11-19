@@ -2,8 +2,8 @@
 
 Runs each scenario behind each defense on a fresh anvil and prints the
 table. A full run (no --only, no --defense) also writes
-benchmark/results.json and benchmark/RESULTS.md. Exits 1 if any cell
-differs from what the plan predicts.
+benchmark/results.json, benchmark/RESULTS.md and benchmark/traces.json.
+Exits 1 if any cell differs from what the plan predicts.
 """
 
 import argparse
@@ -15,9 +15,18 @@ from functools import partial
 from pathlib import Path
 
 from benchmark.defenses import DEFENSES
-from benchmark.harness import AGENT, ATTACKER, MARKET, Result, run_scenario, write_registry
-from benchmark.report import table, to_json, to_markdown
+from benchmark.harness import (
+    AGENT,
+    ATTACKER,
+    CHAIN_ID,
+    MARKET,
+    Result,
+    run_scenario,
+    write_registry,
+)
+from benchmark.report import table, to_json, to_markdown, to_traces
 from benchmark.scenarios import SCENARIOS, mandate
+from mandate_firewall.mandate.registry import load_registry
 from tests.integration.chain import BOB
 
 HERE = Path(__file__).parent
@@ -50,6 +59,7 @@ def main(argv: list[str] | None = None) -> int:
 
     root = Path(tempfile.mkdtemp(prefix="mandate-firewall-suite-"))
     registry = write_registry(root / "registry")
+    names = load_registry(CHAIN_ID, registry)  # read now: `root` is gone when traces are written
     started = time.monotonic()
     results: list[Result] = []
     try:
@@ -83,7 +93,9 @@ def main(argv: list[str] | None = None) -> int:
     if not prefixes and not args.defense and not args.no_write:
         (HERE / "results.json").write_text(to_json(results, scenarios))
         (HERE / "RESULTS.md").write_text(to_markdown(results, scenarios, defenses))
-        print(f"wrote {HERE / 'results.json'} and {HERE / 'RESULTS.md'}")
+        traces = to_traces(results, scenarios, names)
+        (HERE / "traces.json").write_text(traces)
+        print(f"wrote results.json, RESULTS.md and traces.json in {HERE}")
     return 1 if unexpected else 0
 
 

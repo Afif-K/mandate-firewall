@@ -40,14 +40,26 @@ MAC_CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 HARNESS = """<!doctype html><meta charset="utf-8">
 <style>iframe { border: 0; height: 900px; display: block; }</style>
 <body><script>
+// Each width twice: as it is, and with a wide font forced on the page, since
+// system fonts differ (Linux's are wider than macOS's and broke the nav once).
 const widths = WIDTHS_JSON, out = {};
-let pending = widths.length;
-for (const w of widths) {
+const runs = widths.flatMap((w) => [[w, ""], [w, "-widefont"]]);
+let pending = runs.length;
+for (const [w, variant] of runs) {
   const frame = document.createElement("iframe");
   frame.style.width = w + "px";
   frame.src = "site/index.html";
   frame.onload = () => {
-    const doc = frame.contentDocument, root = doc.documentElement;
+    const doc = frame.contentDocument;
+    if (!variant) return check(doc);
+    const wide = doc.createElement("link");
+    wide.rel = "stylesheet";
+    wide.href = "../widefont.css";
+    wide.onload = () => check(doc);  // measure only once the font applies
+    doc.head.append(wide);
+  };
+  const check = (doc) => {
+    const root = doc.documentElement;
     const viewport = root.clientWidth;
     // For the failure message: elements that reach past the viewport and
     // aren't inside a box that scrolls or clips them.
@@ -74,7 +86,7 @@ for (const w of widths) {
     const lines = [...links, brand].filter((e) => e.getClientRects().length > 1)
       .map((e) => e.textContent.trim());
     const header = doc.querySelector(".site-header .bar");
-    out[w] = { scroll: root.scrollWidth, viewport, wide, tables,
+    out[w + variant] = { scroll: root.scrollWidth, viewport, wide, tables,
       headerOneLine: tops.size === 1 && !lines.length && header.offsetHeight <= 64 &&
         header.scrollWidth <= header.clientWidth,
       headerTops: [...tops], wrapped: lines, headerHeight: header.offsetHeight };
@@ -180,6 +192,10 @@ def served(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
     load_builder().build(root / "site")
     (root / "harness.html").write_text(HARNESS.replace("WIDTHS_JSON", json.dumps(WIDTHS)))
     (root / "player.html").write_text(PLAYER_HARNESS)
+    # Same origin as the site, so its CSP (style-src 'self') allows it.
+    fonts = "Verdana, 'DejaVu Sans', sans-serif"
+    wide = f"body, nav a, button, select {{ font-family: {fonts} !important; }}\n"
+    (root / "widefont.css").write_text(wide)
     handler = functools.partial(QuietHandler, directory=str(root))
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -224,7 +240,7 @@ def measure(chrome: str, url: str, profile: Path) -> Any:
 
 def test_the_page_never_scrolls_sideways(chrome: str, served: str, tmp_path: Path) -> None:
     results = measure(chrome, served, tmp_path / "profile")
-    assert sorted(int(w) for w in results) == sorted(WIDTHS)
+    assert sorted(results) == sorted(f"{w}{v}" for w in WIDTHS for v in ("", "-widefont"))
     too_wide = {
         w: r
         for w, r in results.items()

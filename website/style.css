@@ -122,8 +122,11 @@ p { margin: 0 0 1em; }
 .mark .tick { fill: none; stroke: var(--paper); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
 nav ul { display: flex; gap: 1.25rem; list-style: none; margin: 0; padding: 0; flex-wrap: nowrap; justify-content: flex-end; }
 nav a { color: var(--ink-2); text-decoration: none; font-size: 0.95rem; padding: 0.4rem 0; display: inline-block; white-space: nowrap; }
-/* Six links need about 1000 px; below that the two section shortcuts go first. */
+/* Six links need about 1000 px; below that the two section shortcuts go first, and
+   on small phones two labels shorten, leaving room for wider system fonts. */
 @media (max-width: 1040px) { .nav-wide { display: none; } }
+.nav-short { display: none; }
+@media (max-width: 420px) { .nav-long { display: none; } .nav-short { display: inline; } }
 nav a:hover { color: var(--ink); }
 @media (max-width: 560px) {
   .brand span { display: none; }

@@ -133,10 +133,20 @@ FORMATS = {
 }
 
 
+def signed_change(after: str, attrs: dict[str, str], symbol: str) -> str:
+    """data-fmt="change:SYM": data-src minus data-base, signed, exact."""
+    file, _, pointer = attrs["data-base"].partition("#")
+    diff = int(after) - int(resolve(SOURCES[file], pointer))
+    assert diff != 0, "the table shows only balances that changed"
+    return ("+" if diff > 0 else "\u2212") + token_amount(str(abs(diff)), symbol)
+
+
 def shown(attrs: dict[str, str]) -> str:
     """What the element must say, from the full file."""
     file, _, pointer = attrs["data-src"].partition("#")
     item = resolve(SOURCES[file], pointer)
+    if attrs.get("data-fmt", "").startswith("change:"):
+        return signed_change(item, attrs, attrs["data-fmt"].partition(":")[2])
     if "data-line" in attrs:
         item = item.split("\n")[int(attrs["data-line"])]
     if "data-fmt" in attrs:

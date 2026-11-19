@@ -20,6 +20,11 @@
     const frac = (v % unit).toString().padStart(Number(d), "0").replace(/0+$/, "");
     return `${v / unit}${frac ? "." + frac : ""} ${sym}`;
   };
+  // after - before, signed: "−0.000267 ETH" (U+2212 minus), exact.
+  const change = (after, before, sym) => {
+    const d = BigInt(after) - BigInt(before);
+    return (d < 0n ? "−" : "+") + amount((d < 0n ? -d : d).toString(), sym);
+  };
   const FORMAT = {
     amount: (x, sym) => amount(x, sym),
     party: (x) => names[x] || x,
@@ -129,15 +134,29 @@
     const rows = el("tbody");
     for (const [who, assets] of Object.entries(run.holdings_after)) {
       for (const sym of Object.keys(assets)) {
-        rows.append(el("tr", null, el("th", null, who + " " + sym),
-          el("td", null, val(`${ptr}/holdings_before/${who}/${sym}`, `amount:${sym}`)),
-          el("td", null, val(`${ptr}/holdings_after/${who}/${sym}`, `amount:${sym}`))));
+        const before = `${ptr}/holdings_before/${who}/${sym}`;
+        const after = `${ptr}/holdings_after/${who}/${sym}`;
+        const diff = el("span");
+        diff.dataset.src = "traces#" + after;
+        diff.dataset.base = "traces#" + before;
+        diff.dataset.fmt = `change:${sym}`;
+        diff.textContent = change(run.holdings_after[who][sym], run.holdings_before[who][sym], sym);
+        rows.append(el("tr", null, el("th", null, who + " " + sym), el("td", "change", diff),
+          el("td", null, val(before, `amount:${sym}`)), el("td", null, val(after, `amount:${sym}`))));
       }
     }
-    const head = el("thead", null, el("tr", null, el("th", null, "Balance"), el("th", null, "Before"),
-      el("th", null, "After")));
-    body.push(el("div", "balances-scroll", el("table", "balances-table", head, rows)),
-      el("p", "fine", "Balances that changed. ETH includes gas."));
+    const head = el("thead", null, el("tr", null, ...["Balance", "Change", "Before", "After"]
+      .map((t) => el("th", null, t))));
+    const table = el("table", "balances-table", head, rows);
+    // Explicit roles: the phone layout restyles the rows (see the results table).
+    table.setAttribute("role", "table");
+    for (const e of table.querySelectorAll("thead, tbody")) e.setAttribute("role", "rowgroup");
+    for (const e of table.querySelectorAll("tr")) e.setAttribute("role", "row");
+    for (const e of table.querySelectorAll("thead th")) e.setAttribute("role", "columnheader");
+    for (const e of table.querySelectorAll("tbody th")) e.setAttribute("role", "rowheader");
+    for (const e of table.querySelectorAll("td")) e.setAttribute("role", "cell");
+    body.push(el("div", "balances-scroll", table),
+      el("p", "fine", "Balances that changed, exact. ETH changes include the gas each party paid."));
     return ["Outcome, judged from balances on chain", "Result", body];
   }
 
@@ -181,8 +200,10 @@
   next.addEventListener("click", () => {
     if (step < data.runs[run].steps.length) { step++; show(); }
   });
-  player.addEventListener("keydown", (e) => {
-    if (e.target.matches("select, input")) return;
+  // Arrow keys step only while the step area itself has focus (click it or Tab to
+  // it); everywhere else, including the buttons, they keep their usual meaning.
+  card.addEventListener("keydown", (e) => {
+    if (e.target !== card || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
     if (e.key === "ArrowRight") next.click();
     else if (e.key === "ArrowLeft") prev.click();
     else return;

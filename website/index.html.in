@@ -123,7 +123,7 @@
         </div>
         <p class="rec-banner" id="run-banner"><strong>Recorded run, not live.</strong> <span id="run-meta"></span></p>
         <p class="run-mandate" id="run-mandate"></p>
-        <div class="step" id="run-step"></div>
+        <div class="step" id="run-step" tabindex="0" role="region" aria-label="Current step. When this area has focus, the left and right arrow keys step through the run."></div>
         <div class="player-nav">
           <button type="button" class="button" id="run-prev">← Previous</button>
           <span id="run-pos"></span>
@@ -131,7 +131,7 @@
         </div>
         <p class="visually-hidden" aria-live="polite" id="run-live"></p>
       </div>
-      <p class="fine">Mandate ids are shown as labels such as <code>&lt;mandate S&gt;</code>: the real id hashes the time the mandate was created, so it changes on every run. Everything else is as the suite recorded it. Arrow keys step through a run.</p>
+      <p class="fine">Mandate ids are shown as labels such as <code>&lt;mandate S&gt;</code>: the real id hashes the time the mandate was created, so it changes on every run. Everything else is as the suite recorded it. To step with the arrow keys, click the step or Tab to it.</p>
     </div>
   </section>
 

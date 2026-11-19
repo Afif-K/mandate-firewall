@@ -32,7 +32,7 @@ import pytest
 
 from tests.test_site import TRACES, load_builder, shown
 
-WIDTHS = (360, 375, 768, 1280)
+WIDTHS = (360, 375, 640, 768, 800, 900, 1000, 1040, 1100, 1280)
 MAC_CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 
 HARNESS = """<!doctype html><meta charset="utf-8">
@@ -63,7 +63,19 @@ for (const w of widths) {
     const tables = [...doc.querySelectorAll(".table-scroll, .table-frame")]
       .filter((box) => box.scrollWidth > box.clientWidth)
       .map((box) => box.querySelector("table").className);
-    out[w] = { scroll: root.scrollWidth, viewport, wide, tables };
+    // The header stays on one line: the nav links share one top, the brand
+    // text is one line box, and the bar keeps its one-line height.
+    const links = [...doc.querySelectorAll(".site-header nav li")]
+      .filter((e) => e.getClientRects().length);
+    const tops = new Set(links.map((e) => Math.round(e.getBoundingClientRect().top)));
+    const brand = doc.querySelector(".site-header .brand span");
+    const lines = [...links, brand].filter((e) => e.getClientRects().length > 1)
+      .map((e) => e.textContent.trim());
+    const header = doc.querySelector(".site-header .bar");
+    out[w] = { scroll: root.scrollWidth, viewport, wide, tables,
+      headerOneLine: tops.size === 1 && !lines.length && header.offsetHeight <= 64 &&
+        header.scrollWidth <= header.clientWidth,
+      headerTops: [...tops], wrapped: lines, headerHeight: header.offsetHeight };
     if (--pending === 0) {
       const pre = document.createElement("pre");
       pre.id = "result";
@@ -93,7 +105,7 @@ frame.onload = () => {
       banner: banner.textContent, bannerShown: !banner.closest("[hidden]") && box.height > 0,
       values: [...doc.querySelectorAll("#player [data-src]")]
         .filter((e) => !e.closest("select"))
-        .map((e) => [e.dataset.src, e.dataset.fmt || "", e.textContent]),
+        .map((e) => [e.dataset.src, e.dataset.fmt || "", e.textContent, e.dataset.base || ""]),
     });
   };
   for (const option of select.options) {
@@ -109,11 +121,23 @@ frame.onload = () => {
       }
     }
   }
+  // Arrow keys: ignored unless the step area itself has focus.
+  select.value = "A5"; fire(select);
+  const key = (target) => {
+    const init = { key: "ArrowRight", bubbles: true, cancelable: true };
+    const ev = new win.KeyboardEvent("keydown", init);
+    target.dispatchEvent(ev);
+    return [doc.getElementById("run-pos").textContent, ev.defaultPrevented];
+  };
+  const card = doc.getElementById("run-step");
+  next.focus();
+  const keys = { start: doc.getElementById("run-pos").textContent,
+    onBody: key(doc.body), onButton: key(next), onCard: (card.focus(), key(card)) };
   const options = [...select.options].map((o) => [...o.querySelectorAll("[data-src]")]
     .map((e) => [e.dataset.src, "", e.textContent]));
   const pre = document.createElement("pre");
   pre.id = "result";
-  pre.textContent = JSON.stringify({ states, options });
+  pre.textContent = JSON.stringify({ states, options, keys });
   document.body.append(pre);
 };
 </script></body>
@@ -215,11 +239,28 @@ def test_the_player_shows_every_step_of_every_run_as_recorded(
         assert state["bannerShown"], f"{where}: the recorded-run banner is not visible"
         assert state["banner"].startswith("Recorded run, not live."), where
         assert state["values"], f"{where}: no values shown"
-        for src, fmt, text in state["values"]:
+        for src, fmt, text, base in state["values"]:
             attrs = {"data-src": src} | ({"data-fmt": fmt} if fmt else {})
+            attrs |= {"data-base": base} if base else {}
             assert text == shown(attrs), f"{where}: {src}"
             checked += 1
+    keys = result["keys"]
+    assert keys["start"] == "Step 1 of 3"  # A5 under the firewall: approve, swap, outcome
+    # Not focused on the step: the key does nothing and keeps its default (scrolling).
+    assert keys["onBody"] == ["Step 1 of 3", False]
+    assert keys["onButton"] == ["Step 1 of 3", False]
+    assert keys["onCard"] == ["Step 2 of 3", True]  # focused: it steps
     for values in result["options"]:  # the scenario picker
         for src, _, text in values:
             assert text == shown({"data-src": src}), src
     assert checked > 1000
+
+
+def test_the_header_stays_on_one_line(chrome: str, served: str, tmp_path: Path) -> None:
+    results = measure(chrome, served, tmp_path / "profile")
+    wrapped = {
+        w: (r["headerTops"], r["wrapped"], r["headerHeight"])
+        for w, r in results.items()
+        if not r["headerOneLine"]
+    }
+    assert not wrapped, f"the header wraps, by width (link tops, wrapped, height): {wrapped}"

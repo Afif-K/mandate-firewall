@@ -96,7 +96,6 @@
       body.push(p("To ", val(`${ptr}/to`, "party"), s.value !== "0" ? " with " : "",
         s.value !== "0" ? val(`${ptr}/value`, "amount:ETH") : ""));
       if (s.call) body.push(callBlock(s.call, `${ptr}/call`));
-      body.push(el("p", "hash", "tx ", val(`${ptr}/tx_hash`)));
       const answer = el("div", `answer ${s.answer}`,
         el("h4", null, DEFENSE[data.runs[r].defense], ": ", val(`${ptr}/answer`, "answer")));
       if (s.reason) answer.append(p("Reason: ", val(`${ptr}/reason`)));
@@ -168,8 +167,12 @@
       val(`/mandates/${r.mandate}/instruction`, null, "q"));
     $("run-pos").textContent = `Step ${step + 1} of ${total}`;
     card.replaceChildren(el("p", "who", who), el("h3", null, head), ...body);
+    const had = document.activeElement;
     prev.disabled = step === 0;
     next.disabled = step === total - 1;
+    // A button that just became disabled loses focus to the page: hand it over.
+    if (had === next && next.disabled) prev.focus();
+    if (had === prev && prev.disabled) next.focus();
     $("run-live").textContent = `Step ${step + 1} of ${total}: ${head}.`;
   }
 

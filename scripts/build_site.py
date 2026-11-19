@@ -132,7 +132,11 @@ def trimmed(traces: dict[str, Any]) -> dict[str, Any]:
         before, after = run["holdings_before"], run["holdings_after"]
         keep["holdings_before"] = changed(before, after, "before")
         keep["holdings_after"] = changed(before, after, "after")
-        keep["steps"] = drop_nulls(run["steps"])
+        # Transaction hashes stay in traces.json (and inside the firewall's
+        # explanations); leaving them out keeps the page within budget.
+        keep["steps"] = [
+            {k: v for k, v in step.items() if k != "tx_hash"} for step in drop_nulls(run["steps"])
+        ]
         runs.append(keep)
     return {**{k: traces[k] for k in top}, "runs": runs}
 
@@ -313,28 +317,28 @@ def attack_section(traces: dict[str, Any]) -> str:
     return f"""
 <div class="flow">
   <article class="flow-card">
-    <p class="flow-step"><span>1</span> You asked</p>
+    <h3 class="flow-step"><span>1</span> You asked</h3>
     <p class="said">{said}</p>
     <pre class="mono-block">{lines}</pre>
     <p class="flow-note">Locked as mandate {esc(which)} before the agent read anything.</p>
   </article>
   <article class="flow-card">
-    <p class="flow-step"><span>2</span> The injected agent signed</p>
+    <h3 class="flow-step"><span>2</span> The injected agent signed</h3>
     <p class="call">{function} to the {target}</p>
     {call_args(traces, firewall, s)}
     <p class="flow-note">Right router, right token, within budget. Only the recipient is wrong,
       inside calldata an allowlist never reads. Both defenses got the same signed bytes.</p>
   </article>
   <article class="flow-card outcomes">
-    <p class="flow-step"><span>3</span> What happened</p>
+    <h3 class="flow-step"><span>3</span> What happened</h3>
     <div class="outcome bad">
-      <h3>Rule-based guard {run_cell(traces, rules)}</h3>
+      <h4>Rule-based guard {run_cell(traces, rules)}</h4>
       <p>{answer(traces, rules, s_rules)}: the target is on the allowlist, and a router call
         isn't an ERC-20 transfer, so the rules have no recipient to check.</p>
       {balances(traces, rules)}
     </div>
     <div class="outcome good">
-      <h3>Mandate firewall {run_cell(traces, firewall)}</h3>
+      <h4>Mandate firewall {run_cell(traces, firewall)}</h4>
       <p>{answer(traces, firewall, s)} after simulating it:</p>
       <p class="why">{why}</p>
       {balances(traces, firewall)}

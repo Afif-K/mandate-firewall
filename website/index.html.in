@@ -3,11 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src data:; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'; trusted-types 'none'">
 <meta name="referrer" content="no-referrer">
 <title>Mandate Firewall</title>
 <meta name="description" content="An open-source firewall for AI agents that transact onchain: it blocks transactions you didn't authorize, including the ones that pass every spend limit and allowlist. v0.1 beta, testnets only.">
 <meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#fbfaf7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0d0f13" media="(prefers-color-scheme: dark)">
 <link rel="icon" href="{{favicon}}">
 <link rel="stylesheet" href="style.css">
 </head>
@@ -80,7 +82,7 @@
       <p class="section-lede">Seventeen scenarios, each run on a fresh local Anvil chain against three defenses: no defense, a rule-based guard built mechanically from the same mandate (allowlisted targets, recipients and spenders, spend limits, capped approvals), and the firewall. Harm is judged from balances on chain, not from the defenses' own reports.</p>
       <p class="callout"><strong>Read this first: selection bias.</strong> The defender wrote these scenarios, so they illustrate what each defense does; they don't measure it. A benchmark on third-party scenarios is roadmap item M8.</p>
 
-      <div class="table-scroll" role="region" aria-labelledby="summary-cap" tabindex="0">
+      <div class="table-frame">
         <table class="summary">
           <caption id="summary-cap">Summary</caption>
           <thead><tr><th scope="col">Defense</th><th scope="col">Attacks stopped</th><th scope="col">Benign passed</th></tr></thead>
@@ -176,6 +178,6 @@ uv sync &amp;&amp; cp .env.example .env</code></pre></li>
 </footer>
 
 <script type="application/json" id="trace-data">{{trace_data}}</script>
-<script src="replay.js"></script>
+<script src="replay.js" defer></script>
 </body>
 </html>

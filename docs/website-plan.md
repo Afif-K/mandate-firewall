@@ -51,6 +51,16 @@ lands and the suite is rerun, the site updates from the new data with no hand ed
   in `website/` stays readable. Site: 146 KB. If later work needs room, the next lever is
   leaving transaction hashes out of the embedded copy (about 9 KB).
 
+- **2026-11-19, commit 6 (accessibility, performance, CSP):** transaction hashes are left
+  out of the embedded data (they stay in `traces.json` and in the firewall's explanations):
+  the site is 141 KB. The CSP adds Trusted Types (`require-trusted-types-for 'script'`), so
+  the browser refuses any HTML write from script, and `img-src` allows only the inline
+  favicon. The browser tests fail on any console message (a CSP violation, a refused HTML
+  write, a script error). `tests/test_site.py` checks WCAG AA contrast (4.5:1) for every
+  text colour pair in both schemes, one `h1` with no skipped levels, landmarks, `lang`, the
+  skip link, and a name for every link, button and control. Lighthouse needs DevTools or
+  npm, so it is a manual check.
+
 ## Pushback (built into the plan)
 
 1. **"Real recorded runs" needs new suite output, and a test that keeps it honest.** Commit 1

@@ -3,6 +3,8 @@
 - It never scrolls sideways: at each width, the built page's scrollWidth
   fits its viewport, and every table fits its box. Only code blocks may
   scroll, inside their own box, never the page.
+- No console message at all, in any of these runs: a CSP violation, an
+  HTML write refused by Trusted Types, or a script error fails the test.
 - The recorded-runs player, driven through every step of every run: the
   "Recorded run, not live" banner is visible at each step, and every value
   the player shows matches the full traces.json (the same check
@@ -60,7 +62,7 @@ for (const w of widths) {
       .slice(0, 5)
       .map((e) => e.tagName.toLowerCase() + (e.className ? "." + e.className : ""));
     // Tables must fit too: only code blocks may scroll inside their box.
-    const tables = [...doc.querySelectorAll(".table-scroll, .table-frame")]
+    const tables = [...doc.querySelectorAll(".table-frame")]
       .filter((box) => box.scrollWidth > box.clientWidth)
       .map((box) => box.querySelector("table").className);
     // The header stays on one line: the nav links share one top, the brand
@@ -133,6 +135,12 @@ frame.onload = () => {
   next.focus();
   const keys = { start: doc.getElementById("run-pos").textContent,
     onBody: key(doc.body), onButton: key(next), onCard: (card.focus(), key(card)) };
+  // Focus stays on a button at the ends of a run.
+  select.value = "A5"; fire(select);
+  next.focus(); next.click(); next.click();  // to the last step: Next is disabled
+  const atEnd = doc.activeElement.id;
+  doc.getElementById("run-prev").click(); doc.getElementById("run-prev").click();
+  keys.focus = [atEnd, doc.activeElement.id];
   const options = [...select.options].map((o) => [...o.querySelectorAll("[data-src]")]
     .map((e) => [e.dataset.src, "", e.textContent]));
   const pre = document.createElement("pre");
@@ -198,10 +206,17 @@ def measure(chrome: str, url: str, profile: Path) -> Any:
         f"--user-data-dir={profile}",
         "--window-size=1400,1000",
         "--virtual-time-budget=5000",
+        "--enable-logging=stderr",
+        "--v=0",
         "--dump-dom",
         url,
     ]
     done = subprocess.run(argv, capture_output=True, text=True, timeout=60, check=True)  # noqa: S603
+    # Our pages log nothing: any console message is a CSP violation (blocked
+    # style, script, request, or an HTML write refused by Trusted Types) or
+    # a script error.
+    console = [line for line in done.stderr.splitlines() if ":CONSOLE" in line]
+    assert not console, "console messages:\n" + "\n".join(console)
     found = re.search(r'<pre id="result">(.*?)</pre>', done.stdout, re.DOTALL)
     assert found, "the harness wrote no result (did the page load?)"
     return json.loads(html.unescape(found.group(1)))
@@ -250,6 +265,7 @@ def test_the_player_shows_every_step_of_every_run_as_recorded(
     assert keys["onBody"] == ["Step 1 of 3", False]
     assert keys["onButton"] == ["Step 1 of 3", False]
     assert keys["onCard"] == ["Step 2 of 3", True]  # focused: it steps
+    assert keys["focus"] == ["run-prev", "run-next"]  # never dropped to the page
     for values in result["options"]:  # the scenario picker
         for src, _, text in values:
             assert text == shown({"data-src": src}), src

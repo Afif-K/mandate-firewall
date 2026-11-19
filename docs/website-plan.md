@@ -32,6 +32,17 @@ lands and the suite is rerun, the site updates from the new data with no hand ed
 - CI (`.github/workflows/ci.yml`) pins actions by SHA, `contents: read`, no credentials kept,
   and already runs the 51 suite cells on every push.
 
+## Decisions after approval
+
+- **2026-11-19, commit 3 (trimmed data, every shown value checked):** `traces.json` is
+  155 KB (101 KB compact), so the page embeds a trimmed copy: null fields dropped, and
+  only the balances that changed. It is a strict subset: lists keep their length and
+  order, nothing is rewritten. `tests/test_site.py` checks that, and checks every value
+  the page shows: each element the builder fills from a suite file carries `data-src` (a
+  JSON pointer into the full `results.json` or `traces.json`), and the test resolves it
+  and compares the text using its own formatting rules. The 150 KB budget is measured
+  on raw bytes, not gzipped (the built site is 121 KB before the player).
+
 ## Pushback (built into the plan)
 
 1. **"Real recorded runs" needs new suite output, and a test that keeps it honest.** Commit 1

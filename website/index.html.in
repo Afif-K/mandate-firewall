@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<title>Mandate Firewall</title>
+<meta name="description" content="An open-source firewall for AI agents that transact onchain: it blocks transactions you didn't authorize, including the ones that pass every spend limit and allowlist. v0.1 beta, testnets only.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="{{favicon}}">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="wrap bar">
+    <a class="brand" href="#top" aria-label="Mandate Firewall, back to top">
+      <svg class="mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path d="M16 2 4 7v8c0 7.5 5.1 13.4 12 15 6.9-1.6 12-7.5 12-15V7z"/><path class="tick" d="M10 16.5l4 4 8-9"/></svg>
+      <span>Mandate Firewall</span>
+    </a>
+    <nav aria-label="Sections">
+      <ul>
+        <li><a href="#results">Results</a></li>
+        <li><a href="#gaps">Known gaps</a></li>
+        <li><a href="#start">Get started</a></li>
+        <li><a href="{{repo}}">GitHub</a></li>
+      </ul>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <section class="hero" id="top" aria-labelledby="pitch">
+    <div class="wrap hero-grid">
+      <div class="hero-copy">
+        <p class="badges"><span class="badge">v0.1 beta</span> <span class="badge">Testnets and local forks only</span> <span class="badge">Apache-2.0</span></p>
+        <h1 id="pitch">Stop AI agents from sending transactions you didn't&nbsp;authorize.</h1>
+        <p class="lede">Including the ones that pass every spend limit and allowlist. You lock what you asked for before the agent reads anything untrusted. Every transaction it signs is simulated on a private fork, and a deterministic matcher compares what it <em>actually does</em> with what you asked. No LLM allows or blocks anything.</p>
+        <p class="actions">
+          <a class="button primary" href="#start">Get started</a>
+          <a class="button" href="{{repo}}">View on GitHub</a>
+        </p>
+      </div>
+      <div class="hero-demo">
+        {{hero_card}}
+      </div>
+    </div>
+  </section>
+
+  <section class="how" aria-labelledby="how-title">
+    <div class="wrap">
+      <h2 id="how-title" class="visually-hidden">How it works</h2>
+      <ol class="steps">
+        <li><span class="step-n" aria-hidden="true">1</span><h3>Lock a mandate</h3><p>“Swap at most 100 USDC for at least 0.03 WETH on Uniswap.” Captured from you, before the agent starts, and locked by its hash.</p></li>
+        <li><span class="step-n" aria-hidden="true">2</span><h3>Simulate</h3><p>The agent signs as usual. The firewall, an RPC proxy, runs each transaction on a private Anvil fork and records who actually gets what.</p></li>
+        <li><span class="step-n" aria-hidden="true">3</span><h3>Match, then decide</h3><p>A deterministic matcher compares those effects with the mandate. Anything else is blocked, with a “You asked / This transaction” diff.</p></li>
+      </ol>
+      <p class="note">It never touches private keys: it inspects transactions the agent has already signed, and if decoding, simulation or verification fails, the transaction is blocked.</p>
+    </div>
+  </section>
+
+  <section class="results" id="results" aria-labelledby="results-title">
+    <div class="wrap">
+      <p class="eyebrow">Scenario suite (v0.1)</p>
+      <h2 id="results-title">Where rules stop, and where this does</h2>
+      <p class="section-lede">Seventeen scenarios, each run on a fresh local Anvil chain against three defenses: no defense, a rule-based guard built mechanically from the same mandate (allowlisted targets, recipients and spenders, spend limits, capped approvals), and the firewall. Harm is judged from balances on chain, not from the defenses' own reports.</p>
+      <p class="callout"><strong>Read this first: selection bias.</strong> The defender wrote these scenarios, so they illustrate what each defense does; they don't measure it. A benchmark on third-party scenarios is roadmap item M8.</p>
+
+      <div class="table-scroll" role="region" aria-labelledby="summary-cap" tabindex="0">
+        <table class="summary">
+          <caption id="summary-cap">Summary</caption>
+          <thead><tr><th scope="col">Defense</th><th scope="col">Attacks stopped</th><th scope="col">Benign passed</th></tr></thead>
+          <tbody>{{summary_rows}}</tbody>
+        </table>
+      </div>
+
+      <p>The rules stop the obvious attacks. They miss the swaps that use the right router, token and amount. The firewall blocks those, and it <strong>also misses three attacks</strong>, which the table counts against it: a price move after simulation, an off-chain permit, and a fill pushed down to exactly your minimum. It has two false positives.</p>
+
+      <ul class="legend" aria-label="Mandates used in the scenarios">{{mandate_legend}}</ul>
+
+      <div class="table-scroll" role="region" aria-labelledby="all-cap" tabindex="0">
+        <table class="cells">
+          <caption id="all-cap">Every scenario and defense</caption>
+          <thead><tr><th scope="col">#</th><th scope="col">Scenario</th><th scope="col">No defense</th><th scope="col">Rules</th><th scope="col">Firewall</th></tr></thead>
+          <tbody>{{result_rows}}</tbody>
+        </table>
+      </div>
+      <p class="fine">Recorded with {{versions}}. Every refusal, harm and the method: <a href="{{blob}}/benchmark/RESULTS.md">benchmark/RESULTS.md</a>. Regenerate with <code>uv run python -m benchmark</code>.</p>
+    </div>
+  </section>
+
+  <section class="gaps" id="gaps" aria-labelledby="gaps-title">
+    <div class="wrap">
+      <p class="eyebrow">Read before use</p>
+      <h2 id="gaps-title">Known gaps</h2>
+      <p class="section-lede"><a href="{{blob}}/THREAT_MODEL.md">THREAT_MODEL.md</a> lists everything. These five matter most.</p>
+      <ul class="gap-list">
+        <li><h3>Off-chain signatures aren't seen</h3><p>An injected agent can sign a Permit2 or EIP-2612 permit for an attacker, who spends it from their own account. No transaction passes through the firewall. Fix planned: M7. <a href="{{blob}}/THREAT_MODEL.md#off-chain-signatures">Details</a></p></li>
+        <li><h3>The swap minimum holds for the simulated fill only</h3><p>The router's own <code>amountOutMinimum</code> isn't decoded yet, so if the price moves between simulation and inclusion, an agent that set it to 0 gets a worse fill. Fix planned next. <a href="{{blob}}/THREAT_MODEL.md#simulation-can-differ-from-what-happens-on-chain">Details</a></p></li>
+        <li><h3>Effects are only as true as the simulation</h3><p>A contract that behaves in simulation and steals on chain (time bombs, simulation detection) gets an “allow”. <a href="{{blob}}/THREAT_MODEL.md#effects-are-only-as-true-as-the-simulation-now-the-main-gap">Details</a></p></li>
+        <li><h3>An agent that bypasses the proxy isn't checked</h3><p>Nor is anything running as the firewall's OS user. Run the agent as a separate user or container whose only route to a chain is the proxy. <a href="{{blob}}/THREAT_MODEL.md#bypassing-the-proxy">Details</a></p></li>
+        <li><h3>Beta</h3><p>Mandates are one-shot (at most 24 hours), the proxy has no authentication, and the code hasn't been audited. Never use real funds. <a href="{{blob}}/THREAT_MODEL.md#what-it-does-not-protect-against">Everything it doesn't protect against</a></p></li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="start" id="start" aria-labelledby="start-title">
+    <div class="wrap">
+      <p class="eyebrow">About five minutes</p>
+      <h2 id="start-title">Get started</h2>
+      <p class="section-lede">Needs <a href="https://github.com/astral-sh/uv">uv</a> and <a href="https://github.com/foundry-rs/foundry">Foundry</a>. Everything runs on your machine, against a local chain.</p>
+      <ol class="commands">
+        <li><p>Clone and install</p><pre><code>git clone https://github.com/Afif-K/mandate-firewall.git &amp;&amp; cd mandate-firewall
+uv sync &amp;&amp; cp .env.example .env</code></pre></li>
+        <li><p>Start a local chain</p><pre><code>anvil --chain-id 84532</code></pre></li>
+        <li><p>Lock a mandate (you type “yes”)</p><pre><code>uv run mandate-firewall mandate new --send 0.01 ETH \
+    --to 0x70997970C51812dc3A010C7d01b50e0d17dc79C8 --max-transactions 3</code></pre></li>
+        <li><p>Put the firewall in front of the chain, and point your agent's RPC URL at <code>http://127.0.0.1:8546</code></p><pre><code>uv run mandate-firewall serve --upstream http://127.0.0.1:8545</code></pre></li>
+      </ol>
+      <p class="actions"><a class="button primary" href="{{repo}}#quickstart">Full quickstart</a> <a class="button" href="{{blob}}/THREAT_MODEL.md">Threat model</a></p>
+    </div>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap foot">
+    <p>Mandate Firewall is open source under Apache-2.0, by <a href="https://github.com/Afif-K">Afif Kawalit</a>. <a href="{{repo}}#how-this-was-built">How this was built</a>. Report vulnerabilities privately: <a href="{{blob}}/SECURITY.md">SECURITY.md</a>.</p>
+    <p>This page makes no requests to anyone but its host and sets no cookies. GitHub, which hosts it, keeps its own server logs.</p>
+  </div>
+</footer>
+
+<script type="application/json" id="trace-data">{{trace_data}}</script>
+</body>
+</html>

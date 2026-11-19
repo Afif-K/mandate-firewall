@@ -28,3 +28,6 @@ state/
 .idea/
 .vscode/
 graphify-out/
+
+# Built website (scripts/build_site.py)
+_site/

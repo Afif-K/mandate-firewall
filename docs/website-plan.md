@@ -43,6 +43,14 @@ lands and the suite is rerun, the site updates from the new data with no hand ed
   and compares the text using its own formatting rules. The 150 KB budget is measured
   on raw bytes, not gzipped (the built site is 121 KB before the player).
 
+- **2026-11-19, commit 5 (player):** the player tags every value it shows with `data-src`
+  like the builder, and `tests/test_site_browser.py` drives it in headless Chrome through
+  every step of all 51 runs, checking each value against the full `traces.json` and that
+  the "Recorded run, not live" banner is visible at every step. To stay within 150 KB the
+  builder minifies the CSS (comments and whitespace only; quoted strings kept); the source
+  in `website/` stays readable. Site: 146 KB. If later work needs room, the next lever is
+  leaving transaction hashes out of the embedded copy (about 9 KB).
+
 ## Pushback (built into the plan)
 
 1. **"Real recorded runs" needs new suite output, and a test that keeps it honest.** Commit 1

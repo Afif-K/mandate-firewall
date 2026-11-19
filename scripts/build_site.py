@@ -435,6 +435,33 @@ def versions(traces: dict[str, Any]) -> str:
 # --- the page ----------------------------------------------------------------------
 
 
+def minify_css(text: str) -> str:
+    """Comments out, whitespace collapsed, no spaces around `{ } ; ,` or
+    after `:`. Quoted strings are copied as they are. The source in
+    website/ stays readable; this only keeps the page within budget."""
+    out: list[str] = []
+    i = 0
+    while i < len(text):
+        c = text[i]
+        if c in "\"'":
+            end = text.index(c, i + 1) + 1
+            out.append(text[i:end])
+            i = end
+        elif text.startswith("/*", i):
+            i = text.index("*/", i) + 2
+        elif c.isspace():
+            while i < len(text) and text[i].isspace():
+                i += 1
+            if out and out[-1][-1:] not in "{};,:" and i < len(text) and text[i] not in "{};,":
+                out.append(" ")
+        else:
+            if c in "{};," and out and out[-1] == " ":
+                out.pop()
+            out.append(c)
+            i += 1
+    return "".join(out).strip() + "\n"
+
+
 def render(template: str, slots: dict[str, str]) -> str:
     page = template
     for name, text in slots.items():
@@ -468,7 +495,8 @@ def build(out: Path, root: Path = ROOT) -> None:
         shutil.rmtree(out)
     out.mkdir(parents=True)
     (out / "index.html").write_text(page)
-    shutil.copyfile(root / "website" / "style.css", out / "style.css")
+    (out / "style.css").write_text(minify_css((root / "website" / "style.css").read_text()))
+    shutil.copyfile(root / "website" / "replay.js", out / "replay.js")
     # GitHub Pages: serve files as they are, no Jekyll processing.
     (out / ".nojekyll").write_text("")
 

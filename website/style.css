@@ -232,6 +232,12 @@ caption { text-align: left; font-weight: 700; padding: 0.9rem 1rem 0.3rem; }
 th, td { padding: 0.65rem 1rem; text-align: left; vertical-align: top; border-top: 1px solid var(--line); }
 thead th { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-3); border-top: 0; white-space: nowrap; }
 .summary th, .summary td { white-space: nowrap; }
+@media (max-width: 640px) {
+  /* All three columns fit at 360 px: headers may wrap, padding shrinks. */
+  .summary th, .summary td { white-space: normal; padding: 0.6rem 0.65rem; }
+  .summary thead th { font-size: 0.72rem; }
+  .summary td { font-size: 1rem; }
+}
 .summary td { font-variant-numeric: tabular-nums; font-weight: 650; font-size: 1.05rem; }
 .summary .def-firewall th, .summary .def-firewall td { background: var(--accent-soft); }
 .cells { table-layout: auto; }
@@ -297,8 +303,13 @@ thead th { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em;
 .gap-list p { color: var(--ink-2); font-size: 0.97rem; }
 
 .start { background: var(--paper-2); }
-.commands { list-style: none; counter-reset: cmd; padding: 0; margin: 1.5rem 0; display: grid; gap: 1.1rem; max-width: 52rem; }
-.commands li { counter-increment: cmd; }
+.commands {
+  list-style: none; counter-reset: cmd; padding: 0; margin: 1.5rem 0; max-width: 52rem;
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.1rem;
+}
+/* min-width: 0 lets a long command scroll inside its own box instead of
+   widening the grid track, and with it the page. */
+.commands li { counter-increment: cmd; min-width: 0; }
 .commands li > p { margin-bottom: 0.4rem; font-weight: 600; }
 .commands li > p::before { content: counter(cmd) ". "; color: var(--accent); }
 .commands pre {

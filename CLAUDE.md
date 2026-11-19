@@ -120,4 +120,5 @@ Env & deps: `uv sync`, then `uv run pytest`, `uv run ruff check .`.
 
 **Current milestone: router calldata check**
 
-Side task before it: the project website (plan and decisions: docs/website-plan.md).
+Side task done (2026-11-19): the project website, live at https://afif-k.github.io/mandate-firewall/
+(plan and decisions: docs/website-plan.md).

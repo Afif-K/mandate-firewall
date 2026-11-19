@@ -22,11 +22,21 @@ uv run pytest                  # unit and integration tests (anvil/forge ones sk
 uv run pytest -m benchmark     # the 51 scenario-suite cells, about a minute; CI runs them too
 ```
 
+The website's browser tests need Chrome and skip without it; set
+`REQUIRE_BROWSER=1` to make a missing Chrome an error, as CI does.
+
 - **Every verifier rule and every attack scenario gets a test.**
 - **Update THREAT_MODEL.md in the same pull request** when a change affects what
   the firewall protects against, or doesn't.
 - If you change a scenario or an expectation, rerun `uv run python -m benchmark`
-  and commit the regenerated `benchmark/results.json` and `benchmark/RESULTS.md`.
+  and commit the regenerated `benchmark/results.json`, `benchmark/RESULTS.md` and
+  `benchmark/traces.json`. Never edit them by hand: each suite cell checks its run
+  against `traces.json`. The website rebuilds from them on the next push.
+- **The website's prose is hand-written; its numbers aren't.** Tables, recorded
+  runs and the A5 example come from the suite's files. The pitch, "How it works"
+  and the known gaps in `website/index.html.in` are text. When a change alters
+  THREAT_MODEL.md's top gaps or the README's pitch, update them in the same pull
+  request.
 - Type hints everywhere; Pydantic models for structured data.
 - Small, focused commits with clear messages.
 

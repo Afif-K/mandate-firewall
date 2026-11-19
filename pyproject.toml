@@ -26,7 +26,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Afif-K/mandate-firewall"
+Homepage = "https://afif-k.github.io/mandate-firewall/"
+Repository = "https://github.com/Afif-K/mandate-firewall"
 Source = "https://github.com/Afif-K/mandate-firewall"
 Issues = "https://github.com/Afif-K/mandate-firewall/issues"
 "Threat model" = "https://github.com/Afif-K/mandate-firewall/blob/main/THREAT_MODEL.md"

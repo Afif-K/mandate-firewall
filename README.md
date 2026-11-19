@@ -5,7 +5,8 @@ By [Afif Kawalit](https://github.com/Afif-K)
 **Stops AI agents from sending onchain transactions you didn't authorize, including
 the ones that pass every spend limit and allowlist.**
 
-v0.1 beta, for testnets and local forks only.
+v0.1 beta, for testnets and local forks only. Website: [afif-k.github.io/mandate-firewall](https://afif-k.github.io/mandate-firewall/), with
+the attack rules miss, the results, and every recorded run step by step.
 
 An open-source, wallet-agnostic firewall for AI agents that transact onchain. You
 tell the firewall what you want done (the *mandate*: send at most 0.01 ETH to Bob;
@@ -103,6 +104,9 @@ sweeps the input away, and a manipulated price. The firewall blocks all three.
 after simulation, an off-chain permit, and a fill pushed down to exactly your
 minimum (allowed by design). It has two false positives: an unlimited approval,
 and approve + swap sent without waiting for the approval to be mined.
+
+You can step through every run (each transaction, each defense's answer, the
+firewall's explanation and the balances) on the [website](https://afif-k.github.io/mandate-firewall/#runs).
 
 The defender wrote these scenarios, so they illustrate the defenses rather than
 measure them. A benchmark on third-party scenarios is roadmap item M8. Every cell,
@@ -315,6 +319,14 @@ uv run pytest -m llm        # opt-in: the live LLM extractor test (needs LLM_API
 uv run ruff check .         # lint
 uv run ruff format .        # format
 ```
+
+The website is built from `website/` and the suite's committed data
+(`benchmark/results.json`, `benchmark/traces.json`) by `scripts/build_site.py`, with no
+dependencies: `uv run python scripts/build_site.py _site`, then serve `_site/` (for
+example `python3 -m http.server -d _site`). `tests/test_site.py` checks every value
+the page shows against those files; `tests/test_site_browser.py` checks the layout,
+the player and the CSP in headless Chrome (skipped without Chrome unless
+`REQUIRE_BROWSER=1`). The plan and its decisions: [docs/website-plan.md](docs/website-plan.md).
 
 The test contracts in `tests/fixtures/contracts/` are committed as compiled
 artifacts, so tests don't need a Solidity compiler. To rebuild them (forge, solc

@@ -119,3 +119,5 @@ Env & deps: `uv sync`, then `uv run pytest`, `uv run ruff check .`.
       mandate and the firewall checks the signer
 
 **Current milestone: router calldata check**
+
+Side task before it: the project website (plan and decisions: docs/website-plan.md).

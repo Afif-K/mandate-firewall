@@ -220,10 +220,12 @@ section + section { border-top: 1px solid var(--line); }
 
 /* --- tables --------------------------------------------------------------------- */
 
-.table-scroll {
-  overflow-x: auto; margin: 1.5rem 0; border: 1px solid var(--line);
+.table-scroll, .table-frame {
+  margin: 1.5rem 0; border: 1px solid var(--line);
   border-radius: var(--radius); background: var(--paper);
 }
+.table-scroll { overflow-x: auto; }
+.table-frame { overflow: hidden; }
 table { border-collapse: collapse; width: 100%; font-size: 0.95rem; }
 caption { text-align: left; font-weight: 700; padding: 0.9rem 1rem 0.3rem; }
 th, td { padding: 0.65rem 1rem; text-align: left; vertical-align: top; border-top: 1px solid var(--line); }
@@ -231,15 +233,42 @@ thead th { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em;
 .summary th, .summary td { white-space: nowrap; }
 .summary td { font-variant-numeric: tabular-nums; font-weight: 650; font-size: 1.05rem; }
 .summary .def-firewall th, .summary .def-firewall td { background: var(--accent-soft); }
-.cells { min-width: 720px; }
+.cells { table-layout: auto; }
+.cells th, .cells td { padding: 0.6rem 0.75rem; }
 .cells tbody th { white-space: nowrap; font-family: var(--mono); font-size: 0.85rem; }
-.cells tbody th, .cells thead th:first-child { position: sticky; left: 0; background: var(--paper); z-index: 1; }
 .cells .group th {
-  position: static; background: var(--paper-2); font-family: var(--sans); font-size: 0.8rem;
+  background: var(--paper-2); font-family: var(--sans); font-size: 0.8rem;
   text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-2);
 }
-.cells .what { min-width: 18rem; color: var(--ink-2); }
+.cells .what { color: var(--ink-2); }
 .cell { white-space: nowrap; font-weight: 600; font-size: 0.88rem; }
+.key { color: var(--ink-3); font-size: 0.88rem; line-height: 2; margin: 1.5rem 0 0; }
+.key .cell { font-size: 0.82rem; }
+
+/* Phones: each scenario is a stacked row, title on top, the three defenses side by
+   side underneath, each labelled. Nothing scrolls sideways. */
+@media (max-width: 640px) {
+  .cells thead {
+    position: absolute; width: 1px; height: 1px; overflow: hidden;
+    clip: rect(0 0 0 0); white-space: nowrap;
+  }
+  .cells, .cells caption, .cells tbody { display: block; width: 100%; }
+  .cells tbody tr, .cells tbody th, .cells tbody td { display: block; border: 0; padding: 0; }
+  .cells tbody tr:not(.group) {
+    display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: baseline;
+    padding: 0.85rem 0.9rem; border-top: 1px solid var(--line);
+  }
+  .cells tbody tr:not(.group) > th { flex: 0 0 2.2rem; }
+  .cells .what { flex: 1 1 calc(100% - 2.7rem); }
+  .cells .cell { flex: 1 1 0; min-width: 0; white-space: normal; font-size: 0.8rem; }
+  .cells .cell::before {
+    content: attr(data-label); display: block; margin-bottom: 0.25rem;
+    font-size: 0.68rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  .cells .cell span { display: block; text-align: center; padding: 0.3rem 0.2rem; }
+  .cells .group th { padding: 0.55rem 0.9rem; border-top: 1px solid var(--line); white-space: normal; }
+}
 .cell.good { color: var(--good); }
 .cell.bad { color: var(--bad); }
 .cell.warn { color: var(--warn); }

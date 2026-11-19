@@ -80,11 +80,13 @@
 
       <ul class="legend" aria-label="Mandates used in the scenarios">{{mandate_legend}}</ul>
 
-      <div class="table-scroll" role="region" aria-labelledby="all-cap" tabindex="0">
-        <table class="cells">
+      <p class="key"><span class="cell good"><span>✓ Blocked</span></span> an attack refused, nothing lost · <span class="cell bad"><span>✗ Harm</span></span> an attack let through: the attacker gained or the agent lost, judged from balances on chain · <span class="cell warn"><span>! False positive</span></span> a benign task refused</p>
+      <div class="table-frame">
+        <!-- Explicit roles: the phone layout restyles the rows, which drops table semantics in some browsers. -->
+        <table class="cells" role="table" aria-labelledby="all-cap">
           <caption id="all-cap">Every scenario and defense</caption>
-          <thead><tr><th scope="col">#</th><th scope="col">Scenario</th><th scope="col">No defense</th><th scope="col">Rules</th><th scope="col">Firewall</th></tr></thead>
-          <tbody>{{result_rows}}</tbody>
+          <thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col">#</th><th role="columnheader" scope="col">Scenario</th><th role="columnheader" scope="col">No defense</th><th role="columnheader" scope="col">Rules</th><th role="columnheader" scope="col">Firewall</th></tr></thead>
+          <tbody role="rowgroup">{{result_rows}}</tbody>
         </table>
       </div>
       <p class="fine">Recorded with {{versions}}. Every refusal, harm and the method: <a href="{{blob}}/benchmark/RESULTS.md">benchmark/RESULTS.md</a>. Regenerate with <code>uv run python -m benchmark</code>.</p>

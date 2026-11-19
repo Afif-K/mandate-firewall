@@ -29,7 +29,7 @@ BUDGET_BYTES = 150_000
 # from the builder's own table.
 CELL_SHOWN = {
     "blocked": "✓ Blocked",
-    "harm": "✗ Allowed, harm",
+    "harm": "✗ Harm",
     "allowed": "✓ Allowed",
     "false positive": "! False positive",
 }

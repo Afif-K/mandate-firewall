@@ -37,7 +37,7 @@ BLOB = f"{REPO_URL}/blob/main"
 # word, never colour alone.
 CELL_TEXT = {
     "blocked": ("✓", "Blocked"),
-    "harm": ("✗", "Allowed, harm"),
+    "harm": ("✗", "Harm"),
     "allowed, no harm": ("?", "Allowed, no harm"),
     "allowed": ("✓", "Allowed"),
     "false positive": ("!", "False positive"),
@@ -233,11 +233,18 @@ def summary_count(results: dict[str, Any], defense: str, group: str) -> str:
     return f"{sum(r['cell'] == 'allowed' for r in pool)}/{len(pool)}"
 
 
+COLUMN = {"none": "No defense", "rules": "Rules", "firewall": "Firewall"}
+
+
 def cell_html(results: dict[str, Any], index: int) -> str:
-    cell = results["results"][index]["cell"]
+    """One defense's cell. `data-label` names the column on phones, where
+    the row is stacked and the header row is out of view."""
+    row = results["results"][index]
+    cell = row["cell"]
     symbol, word = CELL_TEXT[cell]
     shown = value(f"{symbol} {word}", "results", "results", index, "cell", fmt="cell")
-    return f'<td class="cell {CELL_CLASS[cell]}">{shown}</td>'
+    label = esc(COLUMN[row["defense"]])
+    return f'<td role="cell" class="cell {CELL_CLASS[cell]}" data-label="{label}">{shown}</td>'
 
 
 def result_rows(results: dict[str, Any]) -> str:
@@ -255,16 +262,17 @@ def result_rows(results: dict[str, Any]) -> str:
         if row["kind"] != kind:
             kind = row["kind"]
             rows.append(
-                '<tr class="group"><th colspan="5" scope="colgroup">'
+                '<tr role="row" class="group"><th role="rowheader" colspan="5" scope="colgroup">'
                 f"{esc(KIND_HEADING[kind])}</th></tr>"
             )
         cells = "".join(
             cell_html(results, by_cell[(scenario, d)]) for d in ("none", "rules", "firewall")
         )
         rows.append(
-            f'<tr class="kind-{esc(kind)}">'
-            f'<th scope="row">{value(scenario, "results", "results", first, "scenario")}</th>'
-            '<td class="what">'
+            f'<tr role="row" class="kind-{esc(kind)}">'
+            '<th role="rowheader" scope="row">'
+            f"{value(scenario, 'results', 'results', first, 'scenario')}</th>"
+            '<td role="cell" class="what">'
             f"{value(row['mandate'], 'results', 'results', first, 'mandate', cls='mandate-tag')} "
             f"{value(row['title'], 'results', 'results', first, 'title')}</td>"
             f"{cells}</tr>"

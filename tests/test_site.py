@@ -13,6 +13,7 @@ scenario suite's files, and nothing on it disagrees with them.
 
 import importlib.util
 import json
+from decimal import Decimal
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
@@ -110,15 +111,38 @@ def resolve(document: Any, pointer: str) -> Any:
     return item
 
 
+def token_amount(base_units: str, symbol: str) -> str:
+    """Base units in whole tokens, exactly: Decimal, not the builder's divmod."""
+    decimals = TRACES["assets"][symbol]["decimals"]
+    text = format(Decimal(base_units).scaleb(-decimals).normalize(), "f")
+    return f"{text} {symbol}"
+
+
+def party_name(address: str) -> str:
+    matches = [name for name, a in TRACES["parties"].items() if a == address]
+    assert len(matches) <= 1, address
+    return matches[0] if matches else address
+
+
+# data-fmt -> how a raw value from the file reads on the page.
+FORMATS = {
+    "cell": lambda item, arg: CELL_SHOWN[item],
+    "amount": token_amount,
+    "party": lambda item, arg: party_name(item),
+    "answer": lambda item, arg: {"forwarded": "Forwarded", "refused": "Refused"}[item],
+}
+
+
 def shown(attrs: dict[str, str]) -> str:
     """What the element must say, from the full file."""
     file, _, pointer = attrs["data-src"].partition("#")
     item = resolve(SOURCES[file], pointer)
     if "data-line" in attrs:
         item = item.split("\n")[int(attrs["data-line"])]
-    if attrs.get("data-fmt") == "cell":
-        return CELL_SHOWN[item]
-    assert "data-fmt" not in attrs, f"no rule for data-fmt={attrs['data-fmt']!r}"
+    if "data-fmt" in attrs:
+        name, _, arg = attrs["data-fmt"].partition(":")
+        assert name in FORMATS, f"no rule for data-fmt={attrs['data-fmt']!r}"
+        return FORMATS[name](item, arg)
     assert isinstance(item, str | int), f"{attrs['data-src']} is not a single value"
     return str(item)
 
@@ -131,7 +155,11 @@ def test_every_shown_value_matches_the_full_files(page: Page) -> None:
 
 
 def test_every_cell_is_shown_once(page: Page) -> None:
-    cells = [a["data-src"] for a, _ in page.values if a.get("data-fmt") == "cell"]
+    cells = [
+        a["data-src"]
+        for a, _ in page.values
+        if a.get("data-fmt") == "cell" and a["data-src"].startswith("results#")
+    ]
     expected = [f"results#/results/{i}/cell" for i in range(len(RESULTS["results"]))]
     assert sorted(cells) == sorted(expected)
 
@@ -218,3 +246,23 @@ def test_build_is_deterministic_and_within_budget(site: Path, tmp_path: Path) ->
         assert (site / name).read_bytes() == (again / name).read_bytes(), name
     size = sum((site / name).stat().st_size for name in files)
     assert size < BUDGET_BYTES, f"{size} bytes"
+
+
+def test_the_attack_section_shows_a5_as_recorded(page: Page) -> None:
+    """The rules forwarded the swap and the attacker gained; the firewall
+    refused the same signed bytes and nothing moved."""
+    values = {a["data-src"]: text for a, text in page.values if "data-src" in a}
+    runs = {(r["scenario"], r["defense"]): i for i, r in enumerate(TRACES["runs"])}
+    rules, firewall = runs[("A5", "rules")], runs[("A5", "firewall")]
+    swap = next(
+        i
+        for i, step in enumerate(TRACES["runs"][firewall]["steps"])
+        if step.get("call", {}).get("function") == "exactInputSingle"
+    )
+    assert values[f"traces#/runs/{firewall}/steps/{swap}/call/args/recipient"] == "attacker"
+    assert values[f"traces#/runs/{rules}/holdings_after/attacker/mETH"] == "0.03 mETH"
+    assert values[f"traces#/runs/{firewall}/holdings_after/attacker/mETH"] == "0 mETH"
+    assert values[f"traces#/runs/{firewall}/cell"] == "✓ Blocked"
+    assert values[f"traces#/runs/{rules}/cell"] == "✗ Harm"
+    a = TRACES["runs"][rules]["steps"][swap]["tx_hash"]
+    assert a == TRACES["runs"][firewall]["steps"][swap]["tx_hash"]

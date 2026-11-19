@@ -22,6 +22,7 @@
     </a>
     <nav aria-label="Sections">
       <ul>
+        <li class="nav-wide"><a href="#attack">The attack</a></li>
         <li><a href="#results">Results</a></li>
         <li><a href="#gaps">Known gaps</a></li>
         <li><a href="#start">Get started</a></li>
@@ -58,6 +59,16 @@
         <li><span class="step-n" aria-hidden="true">3</span><h3>Match, then decide</h3><p>A deterministic matcher compares those effects with the mandate. Anything else is blocked, with a “You asked / This transaction” diff.</p></li>
       </ol>
       <p class="note">It never touches private keys: it inspects transactions the agent has already signed, and if decoding, simulation or verification fails, the transaction is blocked.</p>
+    </div>
+  </section>
+
+  <section class="attack" id="attack" aria-labelledby="attack-title">
+    <div class="wrap">
+      <p class="eyebrow">Scenario A5, recorded</p>
+      <h2 id="attack-title">The attack rules miss</h2>
+      <p class="section-lede">A prompt-injected agent makes the swap you asked for, through the router you named, with the token and amount you allowed, and sends the output to the attacker. Every spend limit and allowlist passes. The firewall checks where the money actually goes.</p>
+      {{attack_section}}
+      <p class="fine">Recorded by the scenario suite on a local Anvil chain: real transactions, explanations and balances, shown as the suite wrote them. The full explanation is in <a href="{{blob}}/benchmark/traces.json">benchmark/traces.json</a>.</p>
     </div>
   </section>
 

@@ -15,7 +15,8 @@ Every value the page shows that comes from the suite is in an element that
 names its source: `data-src="traces#/runs/14/steps/1/firewall/explanation"`
 (a JSON pointer into the file), with `data-line` when the element shows one
 line of a multi-line string and `data-fmt` when the value is formatted
-(a cell name, or base units with decimals). tests/test_site.py resolves
+(see FORMATS in tests/test_site.py: a cell name, a token amount, a party's
+name, a defense's answer). tests/test_site.py resolves
 every one against the full files and checks the text. The recorded runs
 are embedded as a trimmed copy of traces.json; the same test checks that
 the copy is a strict subset of the full file (values removed, none changed).
@@ -206,6 +207,142 @@ def hero_card(traces: dict[str, Any]) -> str:
     )
 
 
+# --- the attack rules miss: A5, side by side ------------------------------------
+
+
+def amount(base_units: str, symbol: str, traces: dict[str, Any]) -> str:
+    """Base units as a decimal amount, exactly: "30000" mETH -> "0.03 mETH"."""
+    decimals = traces["assets"][symbol]["decimals"]
+    whole, fraction = divmod(int(base_units), 10**decimals)
+    text = str(whole)
+    if fraction:
+        text += "." + str(fraction).rjust(decimals, "0").rstrip("0")
+    return f"{text} {symbol}"
+
+
+def party(address: str, traces: dict[str, Any]) -> str:
+    names = {a: name for name, a in traces["parties"].items()}
+    return names.get(address, address)
+
+
+def swap_step(traces: dict[str, Any], r: int) -> tuple[int, dict[str, Any]]:
+    for s, step in enumerate(traces["runs"][r]["steps"]):
+        if step.get("call", {}).get("function") == "exactInputSingle":
+            return s, step
+    raise SystemExit(f"build_site: run {r} has no swap step")
+
+
+def balance_change(traces: dict[str, Any], r: int, who: str, symbol: str) -> str:
+    """`who`'s balance of `symbol`, before and after the run."""
+    run = traces["runs"][r]
+    shown = []
+    for when in ("holdings_before", "holdings_after"):
+        base = run[when][who][symbol]
+        fmt = f"amount:{symbol}"
+        shown.append(
+            value(amount(base, symbol, traces), "traces", "runs", r, when, who, symbol, fmt=fmt)
+        )
+    return (
+        f'<span class="who">{esc(who)}</span> {shown[0]} <span aria-label="to">→</span> {shown[1]}'
+    )
+
+
+def answer(traces: dict[str, Any], r: int, s: int) -> str:
+    """A step's answer, capitalised: Forwarded or Refused."""
+    text = traces["runs"][r]["steps"][s]["answer"]
+    return value(text.capitalize(), "traces", "runs", r, "steps", s, "answer", fmt="answer")
+
+
+def run_cell(traces: dict[str, Any], r: int) -> str:
+    shown = " ".join(CELL_TEXT[traces["runs"][r]["cell"]])
+    return value(shown, "traces", "runs", r, "cell", fmt="cell", cls="badge-cell")
+
+
+def call_args(traces: dict[str, Any], r: int, s: int) -> str:
+    """The swap's arguments as named values; the recipient is flagged."""
+    args = traces["runs"][r]["steps"][s]["call"]["args"]
+    rows = []
+    for name, shown, fmt in (
+        ("tokenIn", party(args["tokenIn"], traces), "party"),
+        ("tokenOut", party(args["tokenOut"], traces), "party"),
+        ("amountIn", amount(args["amountIn"], "mUSD", traces), "amount:mUSD"),
+        ("amountOutMinimum", amount(args["amountOutMinimum"], "mETH", traces), "amount:mETH"),
+        ("recipient", party(args["recipient"], traces), "party"),
+    ):
+        flag = ' class="flag"' if name == "recipient" else ""
+        where = ("runs", r, "steps", s, "call", "args", name)
+        rows.append(
+            f'<tr{flag}><th scope="row"><code>{esc(name)}</code></th>'
+            f"<td>{value(shown, 'traces', *where, fmt=fmt)}</td></tr>"
+        )
+    return f'<table class="args"><tbody>{"".join(rows)}</tbody></table>'
+
+
+def balances(traces: dict[str, Any], r: int) -> str:
+    return (
+        f'<p class="balances">{balance_change(traces, r, "attacker", "mETH")}<br>'
+        f"{balance_change(traces, r, 'agent', 'mUSD')}</p>"
+    )
+
+
+def attack_section(traces: dict[str, Any]) -> str:
+    """The within-policy, off-mandate swap: what the user asked, the
+    transaction the agent signed, and what each defense did with it."""
+    scenario = FEATURED[0]
+    rules, firewall = run_index(traces, scenario, "rules"), run_index(traces, scenario, "firewall")
+    s_rules, step_rules = swap_step(traces, rules)
+    s, step = swap_step(traces, firewall)
+    if step_rules["tx_hash"] != step["tx_hash"]:
+        raise SystemExit("build_site: the A5 defenses did not get the same signed transaction")
+    which = traces["runs"][firewall]["mandate"]
+    mandate = traces["mandates"][which]
+
+    said = value(mandate["instruction"], "traces", "mandates", which, "instruction", tag="q")
+    lines = "".join(
+        value(line, "traces", "mandates", which, "lines", i, cls="ln")
+        for i, line in enumerate(mandate["lines"])
+    )
+    function = value(step["call"]["function"], "traces", "runs", firewall, "steps", s, "call",
+                     "function", tag="code")  # fmt: skip
+    target = value(party(step["to"], traces), "traces", "runs", firewall, "steps", s, "to",
+                   fmt="party")  # fmt: skip
+    explanation = step["firewall"]["explanation"].split("\n")
+    why_line = explanation.index("Why:") + 1
+    why = value(explanation[why_line], "traces", "runs", firewall, "steps", s, "firewall",
+                "explanation", line=why_line)  # fmt: skip
+    return f"""
+<div class="flow">
+  <article class="flow-card">
+    <p class="flow-step"><span>1</span> You asked</p>
+    <p class="said">{said}</p>
+    <pre class="mono-block">{lines}</pre>
+    <p class="flow-note">Locked as mandate {esc(which)} before the agent read anything.</p>
+  </article>
+  <article class="flow-card">
+    <p class="flow-step"><span>2</span> The injected agent signed</p>
+    <p class="call">{function} to the {target}</p>
+    {call_args(traces, firewall, s)}
+    <p class="flow-note">Right router, right token, within budget. Only the recipient is wrong,
+      inside calldata an allowlist never reads. Both defenses got the same signed bytes.</p>
+  </article>
+  <article class="flow-card outcomes">
+    <p class="flow-step"><span>3</span> What happened</p>
+    <div class="outcome bad">
+      <h3>Rule-based guard {run_cell(traces, rules)}</h3>
+      <p>{answer(traces, rules, s_rules)}: the target is on the allowlist, and a router call
+        isn't an ERC-20 transfer, so the rules have no recipient to check.</p>
+      {balances(traces, rules)}
+    </div>
+    <div class="outcome good">
+      <h3>Mandate firewall {run_cell(traces, firewall)}</h3>
+      <p>{answer(traces, firewall, s)} after simulating it:</p>
+      <p class="why">{why}</p>
+      {balances(traces, firewall)}
+    </div>
+  </article>
+</div>"""
+
+
 # --- the results tables ----------------------------------------------------------
 
 
@@ -319,6 +456,7 @@ def build(out: Path, root: Path = ROOT) -> None:
             "repo": REPO_URL,
             "blob": BLOB,
             "hero_card": hero_card(traces),
+            "attack_section": attack_section(traces),
             "summary_rows": summary_rows(results),
             "result_rows": result_rows(results),
             "mandate_legend": mandate_legend(traces),
